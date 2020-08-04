@@ -1,10 +1,10 @@
-# Set variables
+# Set variables for base OU and URI
 $ou = "OU=T1,OU=Servers,DC=domain,DC=com"
 $uri = "https://nessus.domain.com:8834/folders"
 
 # Set up authentication
 if (Test-Path -Path $env:USERPROFILE\nessus.xml) {
-    $key = Import-Clixml -Path $env:USERPROFILE\nessus.xml -Force
+    $key = Import-Clixml -Path $env:USERPROFILE\nessus.xml
 } else {
     $key = @{
         accessKey = Read-Host "Enter access key"
@@ -17,8 +17,6 @@ if (Test-Path -Path $env:USERPROFILE\nessus.xml) {
 # Set up headers for authentication
 $headers=@{}
 $headers.Add("X-ApiKeys", "accessKey=$($key.accessKey);secretKey=$($key.secretKey)")
-
-
 
 # Get list of existing folders in Nessus
 $existing = (Invoke-RestMethod -Uri $uri -Method Get -Headers $headers).folders.name
