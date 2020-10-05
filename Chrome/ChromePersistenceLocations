@@ -1,0 +1,11 @@
+C:\Program Files (x86)\Google\Chrome\master_preferences
+- Look for "extensions" : { in the JSON
+
+HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist
+HKLM:\SOFTWARE\Policies\Google\Chrome\3rdparty\extensions
+HKLM:\SOFTWARE\Google\Chrome\Extensions
+HKLM:\SOFTWARE\WOW6432Node\Google\Chrome\Extensions
+HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\{8A69D345-D564-463c-AFF1-A69D9E530F96}
+HKLM:\SOFTWARE\Wow6432Node\Microsoft\Active Setup\Installed Components\{8A69D345-D564-463c-AFF1-A69D9E530F96}
+
+HKCU has some similar locations
