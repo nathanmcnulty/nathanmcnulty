@@ -25,28 +25,28 @@ if (Test-Path -Path "C:\Scripts\AUNames.csv") {
     $list = Import-Csv -Path "C:\Scripts\AUNames.csv"
 } else { 
     # Also support adhoc creation
-    $userInput = Read-Host "Pleaes provide AU names separated by commas"
+    $userInput = Read-Host "Please provide AU names separated by commas"
     $list = $userInput.Split(',')
 }
 
 # You can have multiple AU's with the same name. This code ensures that only AU's with names that do not exist yet are created.
 $existingAUs = Get-AzureADAdministrativeUnit -All $true
 $list | ForEach-Object { 
-    if ($_ -notin $existingAUs.DisplayName) { New-AzureADAdministrativeUnit -Description $_ -DisplayName $_ -Verbose }
+    if ($_ -notin $existingAUs.DisplayName) { New-AzureADAdministrativeUnit -Description $_ -DisplayName $_ }
 }
 
 ##### Create admin security groups #####
 # These security groups will be given password administrator of AU's, and the format will be: AUPWAadmins-<location>-Students
 # I create these in AD so our IAM maintains can maintain group membership, but you can do this in Azure instead (see below)
 $GroupsOU = "OU=Groups,DC=domain,DC=com"
-if (!(Get-ADObject -Filter {name -eq $prefix} -SearchBase $GroupsOU)) { New-ADOrganizationalUnit -Name $prefix -Path $GroupsOU -Verbose }
+if (!(Get-ADObject -Filter {name -eq $prefix} -SearchBase $GroupsOU)) { New-ADOrganizationalUnit -Name $prefix -Path $GroupsOU }
 $list | ForEach-Object {
     if ((Get-ADGroup -Filter {name -eq $_}) -and -not (Get-ADGroup -Filter {name -eq "$prefix-$_"} )) {
         New-ADGroup -Name "$prefix-$_" -DisplayName "$prefix-$_" -GroupScope Global -GroupCategory Security -Path "OU=$prefix,$GroupsOU"
     }
 }
 
-<# To do this in Azure. For the New-AzureADGroup, you may want to mail enable too if you want to email the group
+<# To do this in Azure. For the New-AzureADGroup, you may want to mail enable too if you want to be able to email password reset admins.
 $prefix = "AUPWAdmins"
 $list | ForEach-Object { 
     if (!(Get-AzureADGroup -Filter "displayname eq '$prefix-$_'")) {
