@@ -27,21 +27,18 @@ $excludedGroups = "IT-Staff","AdminGroups"
     }
     $excludedUsers = $excludedGroups | ForEach-Object { Get-AzureADGroup -SearchString $_ | Get-AzureADGroupMember -All $true }
 
-    # Add members to AU
-    $currentUsers | ForEach-Object {
-        if ($_.objectId -notin $existingUsers.objectId -and $_.objectId -notin $excludedUsers.objectId) {
+    $list = Compare-Object -ReferenceObject $currentUsers -DifferenceObject $existingUsers -Property objectId -PassThru
+    $list | Where-Object { $_.SideIndicator -eq "<=" } | ForEach-Object {
+        if ($_.objectId -notin $excludedUsers.objectId) {
             $userObjId = $_.objectId
             Add-AzureADAdministrativeUnitMember -ObjectId $AUobjID -RefObjectId $userObjId
             Write-Output "Added $($_.displayName) to $AU"
         }
     }
-
-    # Remove members from AU
-    $existingUsers | ForEach-Object {
-        if ($_.objectId -notin $currentUsers.objectId) {
-            $userObjId = $_.objectId
-            Remove-AzureADAdministrativeUnitMember -ObjectId $AUobjID -MemberId $userObjId
-            Write-Output "Removed $($_.displayName) from $AU"
-        }
+    $list | Where-Object { $_.SideIndicator -eq "=>" } | ForEach-Object {
+        $userObjId = $_.objectId
+        $userDisplayname = (Get-AzureADUser -ObjectId $userObjId).displayName
+        Remove-AzureADAdministrativeUnitMember -ObjectId $AUobjID -MemberId $userObjId
+        Write-Output "Removed $userDisplayName from $AU"
     }
 }
