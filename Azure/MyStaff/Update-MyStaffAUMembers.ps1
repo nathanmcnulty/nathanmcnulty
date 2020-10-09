@@ -58,7 +58,7 @@ function RemoveUserFromAU {
     } elseif ($existingUsers -eq $null -and -not $currentUsers -eq $null) {
         $currentUsers | AddUserToAU $_
     } elseif ($currentUsers -eq $null -and -not $existingUsers -eq $null) {
-        $currentUsers | RemoveUsersFromAU $_
+        $existingUsers | RemoveUsersFromAU $_
     } else {
         $list = Compare-Object -ReferenceObject $currentUsers -DifferenceObject $existingUsers -Property objectId -PassThru
         $list | Where-Object { $_.SideIndicator -eq "<=" } | ForEach-Object { AddUserToAU $_ }
