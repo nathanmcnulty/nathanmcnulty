@@ -29,7 +29,7 @@ process {
 
     # Add Create and Delete Computer Objects on object and all descendents to ACE list
     $ACEList = New-Object System.Collections.Generic.List[System.Object]
-    "CreateChild","DeleteChild" | ForEach-Object {
+    "CreateChild"<#,"DeleteChild"#> | ForEach-Object {
         $ACE = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $bindObject, $_, "Allow", $GUIDs["computer"]
         $ACEList.Add($ACE)
     }
@@ -41,7 +41,7 @@ process {
     }
 
     # Add remaining extended rights
-    "Reset Password","Account Restrictions", "Validated write to DNS host name", "Validated write to service principal name" | ForEach-Object {
+    "Reset Password","Account Restrictions","Validated write to DNS host name","Validated write to service principal name" | ForEach-Object {
         $ACE = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $bindObject, "ExtendedRight", "Allow", $ExtendedRights["$_"], "Descendents", $GUIDs["computer"]
         $ACEList.Add($ACE)
     }
