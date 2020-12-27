@@ -8,8 +8,9 @@ param (
 begin {
     # Ensure valid name is provided, graceful catch when forgotten
     while ([string]::IsNullOrWhiteSpace($name)) { 
-        Read-Host -Prompt "Enter name of service for scanning account and group (Ex. Networking)"
+        Read-Host -Prompt "Enter name of service for scanning account and group (spaces will be removed)"
     }
+    $name = $name.Replace(" ","")
     
     # Ensure OU exists and offer to create it if it doesn't exist
     if (!(Get-ADObject -Filter {distinguishedName -eq $nessusOU})) { 
@@ -22,16 +23,17 @@ begin {
 }
 
 process {
+    $username = "$prefix-$name"
     # Request password and create service account
     $pass = Read-Host "Enter scan account password" -AsSecureString
-    if (!(Get-ADUser -Filter {name -eq "$prefix-$name"})) { 
-        New-ADUser -Name "$prefix-$name" -Path $nessusOU -AccountPassword $pass -AccountNotDelegated $true -Enabled $true -KerberosEncryptionType AES128,AES256 
-    } else { Write-Output "$prefix-$name already exists"}
+    if (!(Get-ADUser -Filter {name -eq $username})) { 
+        New-ADUser -Name $username -Path $nessusOU -AccountPassword $pass -AccountNotDelegated $true -Enabled $true -KerberosEncryptionType AES128,AES256 
+    } else { Write-Output "$username already exists"}
     
     # Create security group
     if (!(Get-ADGroup -Filter {name -eq "$prefix - $name"})) { 
-        New-ADGroup -Name "$prefix - $name" -Path $nessusOU -GroupCategory Security -GroupScope Global 
-    } else { Write-Output "$prefix - $name already exists"}
+        New-ADGroup -Name $username.Replace("-"," - ") -Path $nessusOU -GroupCategory Security -GroupScope Global 
+    } else { Write-Output "$($username.Replace("-"," - ")) already exists"}
 }
 
 end {
