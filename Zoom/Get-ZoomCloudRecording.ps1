@@ -16,7 +16,7 @@ $headers.Add("authorization", "Bearer $token")
 # Make Invoke-WebRequest run faster
 $ProgressPreference = 'SilentlyContinue'
 
-# Set date range and pull down 1 item so we can determine how many records and pages we have
+# Set date range
 $startDate = (Get-Date).AddDays(-2).ToString('yyyy-MM-dd')
 $endDate = (Get-Date).AddDays(-1).ToString('yyyy-MM-dd')
 
@@ -24,7 +24,7 @@ $endDate = (Get-Date).AddDays(-1).ToString('yyyy-MM-dd')
 do {
     # next_page_token tells the API what page we are on and null to start seems to be OK
     $nextPageToken = $response.next_page_token
-    $response = Invoke-RestMethod "https://api.zoom.us/v2/accounts/me/recordings?page_size=300&next_page_token=$nextPageToken&from=$startDate&to=$endDate" -Method 'GET' -Headers $headers -Body $body
+    $response = Invoke-RestMethod -Uri "https://api.zoom.us/v2/accounts/me/recordings?page_size=300&next_page_token=$nextPageToken&from=$startDate&to=$endDate" -Method 'GET' -Headers $headers
     $response.meetings | ForEach-Object { 
         # Create a folder per user
         $user = ($_.host_email).Split('@')[0]
