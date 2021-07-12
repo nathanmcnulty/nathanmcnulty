@@ -183,7 +183,7 @@
 
                 If ($IsOK) {
                     # Pull data from unmanaged memory block into a usable object
-                    $fbi = [System.Runtime.InteropServices.Marshal]::PtrToStructure($p_fbi, [FileBasicInformation])
+                    $fbi = [System.Runtime.InteropServices.Marshal]::PtrToStructure($p_fbi, [System.Type][FileBasicInformation])
                     $Object = [pscustomobject]@{
                         FullName = $FileStream.Name
                         CreationTime = [datetime]::FromFileTime($fbi.CreationTime)
