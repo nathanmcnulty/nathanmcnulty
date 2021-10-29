@@ -1,0 +1,40 @@
+<PolicyRules>
+    <PolicyRule Id="{c544a991-5786-4402-949e-a032cb790d0e}">
+    <!-- ./Vendor/MSFT/Defender/Configuration/DeviceControl/PolicyRules/%7bc544a991-5786-4402-949e-a032cb790d0e%7d/RuleData -->
+        <Name>Block Write and Execute Access but allow approved USBs</Name>
+        <IncludedIdList>
+            <GroupId>{9b28fae8-72f7-4267-a1a5-685f747a7146}</GroupId>
+        </IncludedIdList>
+        <ExcludedIdList>
+            <GroupId>{65fa649a-a111-4912-9294-fb6337a25038}</GroupId>
+        </ExcludedIdList>
+        <Entry Id="{f8ddbbc5-8855-4776-a9f4-ee58c3a21414}">
+            <Type>Deny</Type>
+            <Options>0</Options>
+            <AccessMask>6</AccessMask>
+        </Entry>
+        <Entry Id="{07e22eac-8b01-4778-a567-a8fa6ce18a0c}">
+            <Type>AuditDenied</Type>
+            <Options>3</Options>
+            <AccessMask>6</AccessMask>
+        </Entry>
+    </PolicyRule>
+    <PolicyRule Id="{36ae1037-a639-4cff-946b-b36c53089a4c}">
+    <!-- ./Vendor/MSFT/Defender/Configuration/DeviceControl/PolicyRules/%7b36ae1037-a639-4cff-946b-b36c53089a4c%7d/RuleData -->
+        <Name>Audit Write and Execute access to approved USBs</Name>
+        <IncludedIdList>
+            <GroupId>{65fa649a-a111-4912-9294-fb6337a25038}</GroupId>
+        </IncludedIdList>
+        <ExcludedIdList></ExcludedIdList>
+        <Entry Id="{a0bcff88-b8e4-4f48-92be-16c36adac930}">
+            <Type>Allow</Type>
+            <Options>0</Options>
+            <AccessMask>6</AccessMask>
+        </Entry>
+        <Entry Id="{4a17df0b-d89d-430b-9cbe-8e0721192281}">
+            <Type>AuditAllowed</Type>
+            <Options>2</Options>
+            <AccessMask>6</AccessMask>
+        </Entry>
+    </PolicyRule>
+</PolicyRules>

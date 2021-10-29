@@ -1,0 +1,19 @@
+<Groups>
+<Group Id="{9b28fae8-72f7-4267-a1a5-685f747a7146}">
+<!-- ./Vendor/MSFT/Defender/Configuration/DeviceControl/PolicyGroups/%7b9b28fae8-72f7-4267-a1a5-685f747a7146%7d/GroupData -->
+    <MatchType>MatchAny</MatchType>
+    <DescriptorIdList>
+        <PrimaryId>RemovableMediaDevices</PrimaryId>
+        <PrimaryId>CdRomDevices</PrimaryId>
+        <PrimaryId>WpdDevices</PrimaryId>
+    </DescriptorIdList>
+</Group>
+<Group Id="{65fa649a-a111-4912-9294-fb6337a25038}">
+<!-- ./Vendor/MSFT/Defender/Configuration/DeviceControl/PolicyGroups/%7b65fa649a-a111-4912-9294-fb6337a25038%7d/GroupData -->
+    <MatchType>MatchAny</MatchType>
+    <DescriptorIdList>
+        <InstancePathId>USBSTOR\DISK&amp;VEN_USB&amp;PROD_FLASH_DISK&amp;REV_5.00\2008101200000127&amp;0</InstancePathId>
+        <InstancePathId>USBSTOR\DISK&amp;VEN_SANDISK&amp;PROD_ULTRA&amp;REV_1.00\4C531001521104122281&amp;0</InstancePathId>
+    </DescriptorIdList>
+</Group>
+</Groups>

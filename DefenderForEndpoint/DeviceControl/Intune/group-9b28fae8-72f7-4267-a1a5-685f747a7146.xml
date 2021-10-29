@@ -1,0 +1,9 @@
+<Group Id="{9b28fae8-72f7-4267-a1a5-685f747a7146}">
+<!-- ./Vendor/MSFT/Defender/Configuration/DeviceControl/PolicyGroups/%7b9b28fae8-72f7-4267-a1a5-685f747a7146%7d/GroupData -->
+    <MatchType>MatchAny</MatchType>
+    <DescriptorIdList>
+        <PrimaryId>RemovableMediaDevices</PrimaryId>
+        <PrimaryId>CdRomDevices</PrimaryId>
+        <PrimaryId>WpdDevices</PrimaryId>
+    </DescriptorIdList>
+</Group>
