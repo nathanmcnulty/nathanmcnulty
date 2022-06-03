@@ -1,12 +1,9 @@
 # 
 # About Me
-Hi, my name is Nathan McNulty. I recently moved into critical infrastructure security after several years as a Security Architect for a large school district with a background in Windows engineering, MEMCM, AD/AzureAD, M365 E5, G Suite, and more. I started my career on Help Desk for a civil engineering firm where I quickly became the Enterprise Desktop Administrator. I later took the role as the Client Architect for the school district where I helped build our securtity program from scratch. I am also on the board at [Opsecedu](https://www.opsecedu.com), a community focused on building up security people serving in K12 and Higher Education.
+Hi, my name is Nathan McNulty, and I am passionate about learning and sharing how to design and implement secure solutions that provide the best user experiences possible.
 
-I mostly write Powershell tools and automation around the products I use, and I will add some configuration files, KQL queries, and such here as well. As I have time to refactor, update, and comment my code, I will work on migrating all of my content from the past 10 years to here.
-
+I am currently a Senior Security Solutions Architect for Patriot Consulting primarily helping our clients implement Azure, M365 Defender, and MEM security and compliance solutions. Having started my career on Help Desk for a civil engineering firm, I quickly became the Enterprise Desktop Administrator and later took a role as the Client Architect for the school district of roughly 50K users where I later spent several years building our security program from scratch. I am also on the board at [Opsecedu](https://www.opsecedu.com), a community focused on building up security people serving in K12 and Higher Education. I have also worked in industrial control systems and several non-profits in addition to working with dozens of organizations from many different sectors.
 
 # 
 # Requests
-Please feel free to open an issue if you have any requests for scripts, tools, or different organization. I also welcome PR's, especially when they fix something I broke :)
-
-# 
+Please feel free to open an issue if you have any requests for scripts, tools, or example solutions. I also welcome PR's, especially when they fix something I broke :)
