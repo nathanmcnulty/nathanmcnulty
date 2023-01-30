@@ -1,3 +1,6 @@
+# Set Tenant Name
+$tenantName = "<YOURDOMAIN>.onmicrosoft.com"
+
 # Connect to Microsoft Graph within Azure Automation
 Connect-AzAccount -Identity
 $token = Get-AzAccessToken -ResourceUrl "https://graph.microsoft.com"
@@ -8,7 +11,7 @@ $groupId = (Get-MgGroup -Filter "DisplayName eq 'Azure Automation - Advanced Aud
 $groupMembers = (Get-MgGroupMember -GroupId $groupId | Select-Object -ExpandProperty AdditionalProperties).mail
 
 # Connect to Exchange Online using Managed Identity
-Connect-ExchangeOnline -ManagedIdentity -Organization getsecurer.onmicrosoft.com -Verbose
+Connect-ExchangeOnline -ManagedIdentity -Organization $tenantName -Verbose
 
 # I have absolutely no idea why the script fails without running a Get-Mailbox first...
 Get-Mailbox -Identity $groupMembers[0] | Out-Null
