@@ -1,0 +1,19 @@
+<RuleCollection Type="Exe" EnforcementMode="Enabled">
+    <FilePathRule Id="2c1e03a1-9f70-410d-9833-7bc938a78ad9" Name="Allow All Except PowerShell" Description="" UserOrGroupSid="S-1-1-0" Action="Allow">
+        <Conditions>
+            <FilePathCondition Path="*" />
+        </Conditions>
+        <Exceptions>
+            <FilePublisherCondition PublisherName="O=MICROSOFT CORPORATION, L=REDMOND, S=WASHINGTON, C=US" ProductName="MICROSOFT® WINDOWS® OPERATING SYSTEM" BinaryName="POWERSHELL.EXE">
+                <BinaryVersionRange LowSection="*" HighSection="*" />
+            </FilePublisherCondition>
+        </Exceptions>
+    </FilePathRule>
+    <FilePublisherRule Id="44fb2a97-3639-4f75-b2ed-97236c546b18" Name="Allow Admin PowerShell" Description="" UserOrGroupSid="S-1-5-32-544" Action="Allow">
+        <Conditions>
+            <FilePublisherCondition PublisherName="O=MICROSOFT CORPORATION, L=REDMOND, S=WASHINGTON, C=US" ProductName="MICROSOFT® WINDOWS® OPERATING SYSTEM" BinaryName="POWERSHELL.EXE">
+                <BinaryVersionRange LowSection="*" HighSection="*" />
+            </FilePublisherCondition>
+        </Conditions>
+    </FilePublisherRule>
+</RuleCollection>
