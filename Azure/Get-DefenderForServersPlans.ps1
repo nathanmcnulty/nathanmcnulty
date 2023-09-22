@@ -6,11 +6,11 @@ $token = Get-AzAccessToken -TenantId $tenantId -ResourceUrl "https://management.
 
 # Iterate through subscriptions and output Defender for Servers Plan
 $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-(Get-AzSubscription -TenantId $tenantId).SubscriptionId | ForEach-Object {
+(Get-AzSubscription -TenantId $tenantId) | ForEach-Object {
     # Request Defender plans
     $wr = @{
         UseBasicParsing = $true
-        Uri = "https://management.azure.com/subscriptions/$_/providers/Microsoft.Security/pricings?api-version=2023-01-01"
+        Uri = "https://management.azure.com/subscriptions/$($_.Id)/providers/Microsoft.Security/pricings?api-version=2023-01-01"
         Method = "GET"
         WebSession = $session
         Headers = @{
@@ -19,6 +19,7 @@ $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
         ContentType = "application/json"
     }
     $plan = (((Invoke-WebRequest @wr).Content | ConvertFrom-Json).value | where-object { $_.name -eq 'VirtualMachines' }).properties.subPlan
-    [array]$report += "$_,$plan"
+    if ($plan -notmatch 'P') { $plan = 'Not Enabled' }
+    [array]$report += "$($_.Name),$($_.Id),$plan"
 }
 $report
