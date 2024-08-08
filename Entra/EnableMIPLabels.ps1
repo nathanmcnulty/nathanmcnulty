@@ -1,3 +1,6 @@
+# Connect with the Directory.ReadWrite.All scope
+Connect-MgGraph -Scopes "Directory.ReadWrite.All"
+
 # Get Group.Unified settings
 $grpUnifiedSetting = Get-MgBetaDirectorySetting | Where-Object { $_.DisplayName -eq "Group.Unified" }
 
