@@ -1,117 +1,40 @@
 {
-  "Conditions": {
-    "Applications": {
-      "ApplicationFilter": {
-        "Mode": null,
-        "Rule": null
-      },
-      "ExcludeApplications": [],
-      "IncludeApplications": [
-        "All"
-      ],
-      "IncludeAuthenticationContextClassReferences": [],
-      "IncludeUserActions": []
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#identity/conditionalAccess/policies/$entity",
+  "id": "70a26b45-5aa3-4b22-82b2-c39948399ce9",
+  "createdDateTime": "2024-08-16T22:12:53.3220744Z",
+  "displayName": "CA090: Prevent AitM for Compliant and Hybrid Join Devices",
+  "state": "enabledForReportingButNotEnforced",
+  "conditions": {
+    "clientAppTypes": [ "all" ],
+    "servicePrincipalRiskLevels": [ ],
+    "signInRiskLevels": [ ],
+    "userRiskLevels": [ ],
+    "applications": {
+      "excludeApplications": [ ],
+      "includeApplications": [ "All" ],
+      "includeAuthenticationContextClassReferences": [ ],
+      "includeUserActions": [ ]
     },
-    "ClientAppTypes": [
-      "all"
-    ],
-    "ClientApplications": {
-      "ExcludeServicePrincipals": null,
-      "IncludeServicePrincipals": null,
-      "ServicePrincipalFilter": {
-        "Mode": null,
-        "Rule": null
+    "devices": {
+      "deviceFilter": {
+        "mode": "include",
+        "rule": "device.isCompliant -eq True -or device.trustType -eq \"ServerAD\""
       }
     },
-    "Devices": {
-      "DeviceFilter": {
-        "Mode": "include",
-        "Rule": "device.isCompliant -eq True -or device.trustType -eq \"ServerAD\""
-      }
-    },
-    "Locations": {
-      "ExcludeLocations": null,
-      "IncludeLocations": null
-    },
-    "Platforms": {
-      "ExcludePlatforms": null,
-      "IncludePlatforms": null
-    },
-    "ServicePrincipalRiskLevels": [],
-    "SignInRiskLevels": [],
-    "UserRiskLevels": [],
-    "Users": {
-      "ExcludeGroups": [],
-      "ExcludeGuestsOrExternalUsers": {
-        "ExternalTenants": {
-          "MembershipKind": null
-        },
-        "GuestOrExternalUserTypes": null
-      },
-      "ExcludeRoles": [],
-      "ExcludeUsers": [],
-      "IncludeGroups": [],
-      "IncludeGuestsOrExternalUsers": {
-        "ExternalTenants": {
-          "MembershipKind": null
-        },
-        "GuestOrExternalUserTypes": null
-      },
-      "IncludeRoles": [],
-      "IncludeUsers": [
-        "All"
-      ]
+    "users": {
+      "excludeGroups": [ ],
+      "excludeRoles": [ ],
+      "excludeUsers": [ ],
+      "includeGroups": [ ],
+      "includeRoles": [ ],
+      "includeUsers": [ "All" ]
     }
   },
-  "CreatedDateTime": "2024-08-16T21:33:19.2751972Z",
-  "Description": null,
-  "DisplayName": "CA090: Prevent AitM for Compliant and Hybrid Join Devices",
-  "GrantControls": {
-    "AuthenticationStrength": {
-      "AllowedCombinations": null,
-      "CombinationConfigurations": null,
-      "CreatedDateTime": null,
-      "Description": null,
-      "DisplayName": null,
-      "Id": null,
-      "ModifiedDateTime": null,
-      "PolicyType": null,
-      "RequirementsSatisfied": null
-    },
-    "BuiltInControls": [
-      "compliantDevice",
-      "domainJoinedDevice"
-    ],
-    "CustomAuthenticationFactors": [],
-    "Operator": "OR",
-    "TermsOfUse": []
-  },
-  "Id": "6ba609f1-d43c-4a88-ad2a-021b5d84393e",
-  "ModifiedDateTime": "2024-08-16T21:39:26.5406053Z",
-  "SessionControls": {
-    "ApplicationEnforcedRestrictions": {
-      "IsEnabled": null
-    },
-    "CloudAppSecurity": {
-      "CloudAppSecurityType": null,
-      "IsEnabled": null
-    },
-    "DisableResilienceDefaults": null,
-    "PersistentBrowser": {
-      "IsEnabled": null,
-      "Mode": null
-    },
-    "SignInFrequency": {
-      "AuthenticationType": null,
-      "FrequencyInterval": null,
-      "IsEnabled": null,
-      "Type": null,
-      "Value": null
-    }
-  },
-  "State": "enabledForReportingButNotEnforced",
-  "TemplateId": null,
-  "AdditionalProperties": {
-    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#identity/conditionalAccess/policies/$entity"
+  "grantControls": {
+    "authenticationStrength@odata.context": "https://graph.microsoft.com/v1.0/$metadata#identity/conditionalAccess/policies(\u002770a26b45-5aa3-4b22-82b2-c39948399ce9\u0027)/grantControls/authenticationStrength/$entity",
+    "builtInControls": [ "compliantDevice", "domainJoinedDevice" ],
+    "customAuthenticationFactors": [ ],
+    "operator": "OR",
+    "termsOfUse": [ ]
   }
 }
