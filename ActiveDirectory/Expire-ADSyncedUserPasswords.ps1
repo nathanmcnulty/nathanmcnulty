@@ -25,6 +25,6 @@ if ($StartAadSync) {
 if ($users) {
    # (Optional) Move to line 1: #Requires -Module Microsoft.Graph.Authentication,Microsoft.Graph.Users,Microsoft.Graph.Users.Actions
    # Connect to Azure AD
-   Connect-MgGraph -ClientID <appId> -TenantId <tenantId> -CertificateThumbprint <thumbprint> -Scopes User.ReadWrite.All
+   Connect-MgGraph -ClientID <appId> -TenantId <tenantId> -CertificateThumbprint <thumbprint> -Scopes User.RevokeSessions.All
    $users | ForEach-Object { Revoke-MgUserSignInSession -UserId $_ }
 }
