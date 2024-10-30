@@ -30,6 +30,6 @@ $body = @{
 } | ConvertTo-Json
 
 # Offboard each device in the list of $deviceIds
-$deviceIds | ForEach-Objects {
+$deviceIds | ForEach-Object {
     Invoke-WebRequest -Method POST -Uri "https://api.security.microsoft.com/api/machines/$_/offboard" -Body $body -Headers $headers
 }
