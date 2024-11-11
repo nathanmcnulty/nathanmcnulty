@@ -8,6 +8,8 @@ This is a collection of commands that will help automate the configuration of th
 
 [Advanced features](README.md#advanced-features)
 
+[Licenses](README.md#licenses)
+
 [Email notifications](README.md#email-notifications)
 
 [Roles](README.md#roles)
@@ -21,6 +23,12 @@ This is a collection of commands that will help automate the configuration of th
 [Web content filtering](README.md#web-content-filtering)
 
 [Automation uploads](README.md#automation-uploads)
+
+[Automation folder exclusions](README.md#automation-folder-exclusions)
+
+[Enforcement scope](README.md#enforcement-scope)
+
+[Intune permissions](README.md#intune-permissions)
 
 ## Setting up our session and cookies
 
@@ -172,9 +180,34 @@ To enable Preview features:
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/settings/SavePreviewExperienceSetting?context=MdatpContext" -Body "{`"IsOptIn` =true}" -ContentType "application/json" -WebSession $session -Headers $headers
 ```
 
+## Licenses
+
+This section is mostly for usage check, but for environments with M365 Business Premium / Defender for Business, we can define the licensing level as Defender for Business or Defender for Endpoint P2. Next time I get access to a Defender for Business environment, I will try to map out those settings.
+
+This will kick back the license usage details:
+
+```powershell
+# Get license cound
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/licenses/mgmt/aadlicenses/sums" -ContentType "application/json" -WebSession $session -Headers $headers).sums
+
+# Get usage
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8sMachineApi/ine/machineapiservice/machines/skuReport" -ContentType "application/json" -WebSession $session -Headers $headers).Sums
+```
+
 ## Email notifications
 
 I recommend moving to Defender XDR email notifications. Once I complete mapping out that API, I will publish that under the Defender XDR section and link to it from here :) 
+
+Here's how we can get existing email notification settings, and later I'll figure out how to migrate them to Defender XDR:
+
+```powershell
+# Get Alerts notifications
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/alertsEmailNotifications/email_notifications" -ContentType "application/json" -WebSession $session -Headers $headers).items
+
+# Get vulnerability notifications
+$headers["api-version"] = "1.0"
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/tvm/orgsettings/vulnerability-notification-rules" -ContentType "application/json" -WebSession $session -Headers $headers
+```
 
 ## Roles
 
@@ -399,7 +432,25 @@ Indicators have an official API endpoint and should be managed through those end
 
 ## Web content filtering
 
-We don't typically make recommendations here, so I will map this out later ;)
+I will have to map out each category to their ID later, but this is a basic example of blocking categories that are higher risk while trying to still be mostly open.
+
+```powershell
+# Get policies
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/userRequests/webcategory/policies" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Get list of device group IDs
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/rbacManagementApi/rbac/machine_groups?addAadGroupNames=true&addMachineGroupCount=false" -ContentType "application/json" -WebSession $session -Headers $headers).items | Select-Object MachineGroupId,Name
+
+# Create policy (leave RbacGroupIds empty for all device groups)
+$body = @{
+  AuditCategoryIds = @(65,75,47,62,18,29,76,14,68,73,26,7,19,70,92,48,39)
+  BlockedCategoryIds = @(33,77,46,78,12,21,23,67,84,51,52)
+  PolicyName = "Baseline policy"
+  RbacGroupIds = @()
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/userRequests/webcategory/policy" -ContentType "application/json" -Body $body -WebSession $session -Headers $headers
+```
 
 ## Automation uploads
 
@@ -418,5 +469,69 @@ $body = @{
 } | ConvertTo-Json
 
 Invoke-RestMethod -Method "PATCH" -Uri "https://security.microsoft.com/apiproxy/mtp/autoIr/admin/advanced" -ContentType "application/json" -Body $body -WebSession $session -Headers $headers
+```
 
+## Automation folder exclusions
+
+I'm capturing these details to check if we have anything configured. For Maester tests, may attempt to add some logic to check for poorly defined exclusions or something :)
+
+```powershell
+# Get list of automation folder exclusions
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/autoIr/folder_exclusion/all" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Create automation folder exclusion
+$body = @{
+  description = "Test"
+  folder = "C:\Test"
+  extensions = @("")
+  fileNames = @("Test.exe")
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/autoIr/folder_exclusion/all" -ContentType "application/json" -Body $body -WebSession $session -Headers $headers
+```
+
+## Enforcement scope
+
+For now, just mapping the API endpoints for getting values.
+
+```powershell
+# Check that Intune is configured to enable this feature
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/siamApi/memonboardstatus" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Get current config
+$response = Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/siamApi/mdestatus" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# ascEnabled : True enables managing devices onboarded through Defender for Cloud
+# mdeEnabledWithSccm : True means MDE will override the ConfigMgr agent policies
+$response
+
+# mdeEnabled : 0 means disabled, 1 means on all devices, 2 means on tagged devices
+$response.osFamilies
+```
+
+There's a preview feature for managing security settings on Domain Controllers, and these are the two API endpoints for that:
+
+```powershell
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/siamApi/domaincontrollers/totals" -ContentType "application/json" -WebSession $session -Headers $headers
+
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/siamApi/domaincontrollers/list" -ContentType "application/json" -WebSession $session -Headers $headers
+```
+
+## Intune permissions
+
+Any groups assigned here are granted the Endpoint security managers role in Intune. This will show how to get an existing list as well as how to add a group.
+
+```powershell
+# Get existing groups
+$existingGroups = (Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/siamApi/MemPermissions/MemRoleAssignment" -ContentType "application/json" -WebSession $session -Headers $headers).members
+
+# Get a list of all groups via the API proxy
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/rbacManagementApi/rbac/aad_groups" -ContentType "application/json" -WebSession $session -Headers $headers).items
+
+# Add a group
+[array]$memberIds = $existingGroups.memberId
+$memberIds += "f500e338-db07-4fbd-a77a-f2e9bf11810d"
+$body = @{ membersIds = @( $memberIds ) } | ConvertTo-Json
+
+Invoke-RestMethod -Method "PUT" -Uri "https://security.microsoft.com/apiproxy/mtp/siamApi/MemPermissions/MemRoleAssignment" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
 ```
