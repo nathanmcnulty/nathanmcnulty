@@ -2,6 +2,28 @@
 
 This is a collection of commands that will help automate the configuration of the Defender XDR portal settings. To use this, you must obtain the sccauth value and xsrf-token value from the browser and use it to create cookies and headers for our API calls. This is because we are using an internal API to configure settings, and there isn't a public way to get the right tokens.
 
+## Table of Contents
+
+[Setting up our session and cookies](README.md#setting-up-our-session-and-cookies)
+
+[Email notifications](README.md#email-notifications)
+
+[Preview features](README.md#preview-features)
+
+[Alert service settings](README.md#alert-service-settings)
+
+[Permissions and Roles](README.md#permissions-and-roles)
+
+[Streaming API](README.md#streaming-api)
+
+[Asset rule management](README.md#asset-rule-management)
+
+[Alert tuning](README.md#alert-tuning)
+
+[Critical asset management](README.md#critical-asset-management)
+
+[Identity automated response](README.md#identity-automated-response)
+
 ## Setting up our session and cookies
 
 First, we need to create a WebRequestSession object contaning the sccauth and xsrf cookies copied from the browser and headers with the xsrf token. To get this, open Developer Tools in your browser and make sure the Network tab is set to preserve logs, then log into security.microsoft.com. Search for **apiproxy** and select a request.
@@ -33,7 +55,62 @@ $headers["X-XSRF-TOKEN"] = [System.Net.WebUtility]::UrlDecode($session.cookies.G
 
 With this complete, we can now make requests to the internal API :)
 
-## Defender XDR - Alert service settings
+This is an example that returns the tenant context for the whole Defender portal and feature set:
+
+```powershell
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/sccManagement/mgmt/TenantContext?realTime=true" -ContentType "application/json" -WebSession $session -Headers $headers
+```
+
+## Email notifications
+
+Defender XDR email notifications allows us to better manage notifications across all of the services intead of having to create them on each individual service.
+
+The following commands will get the list of notification configurations:
+
+```powershell
+# Get existing incident notifications
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/cloud/public/internal/IncidentNotificationSettingsV2" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Get existing actions notifications
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/actionCenter/actioncenterui/email-notifications" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Get existing threat analytics notifications
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/settings/ThreatAnalyticNotificationsSettings" -ContentType "application/json" -WebSession $session -Headers $headers
+```
+
+I will work on adding an example of each for creating new notifications once I've finished documenting these API endpoints.
+
+## Preview features
+
+To get the existing values for Preview features:
+
+```powershell
+# Defender XDR and Defender for Identity
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/settings/GetPreviewExperienceSetting?context=MtpContext" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Defender for Endpoint
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/settings/GetPreviewExperienceSetting?context=MdatpContext" -ContentType "application/json" -WebSession $session -Headers $headers
+
+
+# Defender for Cloud Apps
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mcas/cas/api/v1/preview_features/get/" -ContentType "application/json" -WebSession $session -Headers $headers
+
+```
+
+The following commands enable Preview features:
+
+```powershell
+# Defender XDR and Defender for Identity
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/settings/SavePreviewExperienceSetting?context=MtpContext" -Body '{"IsOptIn":true}' -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Defender for Endpoint
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/settings/SavePreviewExperienceSetting?context=MdatpContext" -Body '{"IsOptIn":true}' -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Defender for Cloud Apps
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mcas/cas/api/v1/preview_features/update/" -Body '{"previewFeaturesEnabled":true}' -ContentType "application/json" -WebSession $session -Headers $headers
+```
+
+## Alert service settings
 
 By default, Entra Identity Protection only shares High risk alerts to the Defender XDR service, and none of the Defender for Cloud alerts are shared. 
 
@@ -62,7 +139,7 @@ $body = @{
 This command makes the change:
 
 ```powershell
-Invoke-RestMethod -Method PUT -Uri "https://security.microsoft.com/apiproxy/mtp/alertsApiService/workloads/disabled?workload=Aad" -Body $body -ContentType "application/json" -WebSession $session
+Invoke-RestMethod -Method "PUT" -Uri "https://security.microsoft.com/apiproxy/mtp/alertsApiService/workloads/disabled?workload=Aad" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
 ```
 
 ### Defender for Cloud
@@ -88,5 +165,89 @@ $body = @{
 This command makes the change:
 
 ```powershell
-Invoke-RestMethod -Method PUT -Uri "https://security.microsoft.com/apiproxy/mtp/alertsApiService/workloads/disabled?workload=Mdc"  -Body $body -ContentType "application/json" -WebSession $session
+Invoke-RestMethod -Method "PUT" -Uri "https://security.microsoft.com/apiproxy/mtp/alertsApiService/workloads/disabled?workload=Mdc"  -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
 ```
+
+## Permissions and Roles
+
+Unified RBAC is the future of Defender permissions, and we will want to move to this model sooner than later. These commands help check whether Unified RBAC is enabled for the supported services (and show ones that have been added that are not available yet!), and optionally enable Unified RBAC for each of the services that are currently supported. I will try to remember to update this once Defender for Cloud Apps has been made publicly available ;)
+
+```powershell
+# Get the current configuration of which services are using Unified RBAC
+$headers["api-version"] = "1.0"
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/urbacConfiguration/gw/unifiedrbac/configuration/tenantinfo/" -ContentType "application/json" -WebSession $session -Headers $headers).workloads
+
+# Enable Unified RBAC for all workloads
+$headers["api-version"] = "2.0"
+"Mda","Mde","Mdi","Mdo" | ForEach-Object {
+    Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/urbacConfiguration/gw/unifiedrbac/configuration/enablement/?workload=$_" -ContentType "application/json" -WebSession $session -Headers $headers
+}
+```
+
+I will provide more examples of creating RBAC roles in the near future. The cmdlet for [New-MgBetaRoleManagementDefenderRoleDefinition](https://learn.microsoft.com/en-us/powershell/module/microsoft.graph.beta.devicemanagement.enrollment/new-mgbetarolemanagementdefenderroledefinition?view=graph-powershell-beta) was recently added, but the API endpoint referenced isn't in the public Graph API docs yet.
+
+Fabian Bader was kind enough to point out the URI which will simply be another RBAC provider (Defender) under the unified role management API:
+https://learn.microsoft.com/en-us/graph/api/resources/rolemanagement?view=graph-rest-beta
+
+While we can get and set Unified RBAC roles using Graph API, I haven't found a Graph API endpoint with the permissions quite yet. We can run the following commands get a list of avaialable permissions that you'll use to create roles:
+
+```powershell
+# Get list of available permissions
+$permissions = (Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/urbacConfiguration/gw/unifiedrbac/configuration/permissions/" -ContentType "application/json" -WebSes
+
+# Show permissions applicable to MDE
+$permissions | Where-Object { $_.appScopeIds -contains "Mde" }
+```
+
+Here is an example using the new Graph API endpoint to get the existing RBAC roles and their associated permissions:
+
+```powershell
+# Get current Defender RBAC roles
+(Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/beta/roleManagement/defender/roleDefinitions" -OutputType PSObject).value
+
+# Create the role assigned to a group (be sure to update group objectId or search parameter)
+$group = Get-MgGroup -GroupId 'b1d02e79-86f9-4a8a-8b36-ddb35d4c847a'
+$body = @{
+    displayName = "Read-Only"
+    rolePermissions = @(@{
+        allowedResourceActions = @("microsoft.xdr/secops/*/read","microsoft.xdr/securityposture/*/read")
+    })
+    roleAssignments = @(@{
+        id = ""
+        roleDefinitionId = ""
+        displayName = "Read-only"
+        appScopeIds = @("All")
+        principalIds = @("$($group.Id)")
+        principals = @(@{
+            displayName = "$($group.DisplayName)"
+            description = "$($group.DisplayName)"
+            principalId = "$($group.Id)"
+            type = "Group"
+        })
+        scopes = @()
+    })
+    isEnabled = $true
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/urbacConfiguration/gw/unifiedrbac/configuration/roleDefinitions/" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+```
+
+## Streaming API
+
+For now, I'm only documenting how to get Streaming API configuration. I will need to work on some Azure PowerShell/CLI stuff to present options to create event hubs/storage account to configure as targets for Streaming API, and that will have to wait :)
+
+```powershell
+# Get the current configuration of which services are using Unified RBAC
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/wdatpApi/dataexportsettings" -ContentType "application/json" -WebSession $session -Headers $headers).value
+```
+
+## Asset rule management
+
+
+## Alert tuning
+
+
+## Critical asset management
+
+
+## Identity automated response
