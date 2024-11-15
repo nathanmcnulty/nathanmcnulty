@@ -210,7 +210,7 @@
                 "settingInstanceTemplateReference": null,
                 "choiceSettingValue": {
                     "settingValueTemplateReference": null,
-                    "value": "device_vendor_msft_defender_configuration_allowswitchtoasyncinspection_0",
+                    "value": "device_vendor_msft_defender_configuration_allowswitchtoasyncinspection_1",
                     "children": []
                 }
             }
