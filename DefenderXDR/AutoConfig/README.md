@@ -364,4 +364,18 @@ $body = @{
 
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/disrupt/api/radius/uaas/v2/user-exclusion" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
 
+# Remove a user from exclusion
+$user = Get-MgUser -UserId "AdrianeMorrison@sharemylabs.com"
+
+$body = @{
+    ExcludedEntityIdentifiers = @(@{ 
+        DomainName = "$(($user.UserPrincipalName).Split('@')[-1])"
+        Id = ""
+        SystemDisplayName = "$($user.DisplayName)"
+        AadId ="$($user.Id)"
+    })
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy/mtp/disrupt/api/radius/uaas/v2/user-exclusion" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
