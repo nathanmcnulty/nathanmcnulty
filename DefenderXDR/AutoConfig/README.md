@@ -51,6 +51,7 @@ $session.Cookies.Add((New-Object System.Net.Cookie("XSRF-TOKEN", "$xsrf", "/", "
 # Set the headers to include the xsrf token
 [Hashtable]$Headers=@{}
 $headers["X-XSRF-TOKEN"] = [System.Net.WebUtility]::UrlDecode($session.cookies.GetCookies("https://security.microsoft.com")['xsrf-token'].Value)
+
 ```
 
 With this complete, we can now make requests to the internal API :)
@@ -59,6 +60,7 @@ This is an example that returns the tenant context for the whole Defender portal
 
 ```powershell
 Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/sccManagement/mgmt/TenantContext?realTime=true" -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
 
 ## Email notifications
@@ -76,6 +78,7 @@ Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/actionCenter
 
 # Get existing threat analytics notifications
 Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/settings/ThreatAnalyticNotificationsSettings" -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
 
 I will work on adding an example of each for creating new notifications once I've finished documenting these API endpoints.
@@ -101,13 +104,14 @@ The following commands enable Preview features:
 
 ```powershell
 # Defender XDR and Defender for Identity
-Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/settings/SavePreviewExperienceSetting?context=MtpContext" -Body '{"IsOptIn":true}' -ContentType "application/json" -WebSession $session -Headers $headers
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/settings/SavePreviewExperienceSetting?context=MtpContext" -Body '{"IsOptIn =true}' -ContentType "application/json" -WebSession $session -Headers $headers
 
 # Defender for Endpoint
-Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/settings/SavePreviewExperienceSetting?context=MdatpContext" -Body '{"IsOptIn":true}' -ContentType "application/json" -WebSession $session -Headers $headers
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/settings/SavePreviewExperienceSetting?context=MdatpContext" -Body '{"IsOptIn =true}' -ContentType "application/json" -WebSession $session -Headers $headers
 
 # Defender for Cloud Apps
-Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mcas/cas/api/v1/preview_features/update/" -Body '{"previewFeaturesEnabled":true}' -ContentType "application/json" -WebSession $session -Headers $headers
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mcas/cas/api/v1/preview_features/update/" -Body '{"previewFeaturesEnabled =true}' -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
 
 ## Alert service settings
@@ -125,21 +129,24 @@ $body = @{
     Feedback = $null
     DisablementType = "None"
 } | ConvertTo-Json
+
 ```
 
-This body configures to "High-impact alerts only":
+This body configures to "High-impact alerts only =
 
 ```powershell
 $body = @{
     Feedback = $null
     DisablementType = "None"
 } | ConvertTo-Json
+
 ```
 
 This command makes the change:
 
 ```powershell
 Invoke-RestMethod -Method "PUT" -Uri "https://security.microsoft.com/apiproxy/mtp/alertsApiService/workloads/disabled?workload=Aad" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
 
 ### Defender for Cloud
@@ -151,21 +158,24 @@ $body = @{
     Feedback = $null
     DisablementType = "None"
 } | ConvertTo-Json
+
 ```
 
-This body configures to "No alerts":
+This body configures to "No alerts =
 
 ```powershell
 $body = @{
     Feedback = $null
     DisablementType = "Full"
 } | ConvertTo-Json
+
 ```
 
 This command makes the change:
 
 ```powershell
 Invoke-RestMethod -Method "PUT" -Uri "https://security.microsoft.com/apiproxy/mtp/alertsApiService/workloads/disabled?workload=Mdc"  -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
 
 ## Permissions and Roles
@@ -182,6 +192,7 @@ $headers["api-version"] = "2.0"
 "Mda","Mde","Mdi","Mdo" | ForEach-Object {
     Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/urbacConfiguration/gw/unifiedrbac/configuration/enablement/?workload=$_" -ContentType "application/json" -WebSession $session -Headers $headers
 }
+
 ```
 
 I will provide more examples of creating RBAC roles in the near future. The cmdlet for [New-MgBetaRoleManagementDefenderRoleDefinition](https://learn.microsoft.com/en-us/powershell/module/microsoft.graph.beta.devicemanagement.enrollment/new-mgbetarolemanagementdefenderroledefinition?view=graph-powershell-beta) was recently added, but the API endpoint referenced isn't in the public Graph API docs yet.
@@ -197,6 +208,7 @@ $permissions = (Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/
 
 # Show permissions applicable to MDE
 $permissions | Where-Object { $_.appScopeIds -contains "Mde" }
+
 ```
 
 Here is an example using the new Graph API endpoint to get the existing RBAC roles and their associated permissions:
@@ -230,6 +242,7 @@ $body = @{
 } | ConvertTo-Json -Depth 4
 
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/urbacConfiguration/gw/unifiedrbac/configuration/roleDefinitions/" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
 
 ## Streaming API
@@ -239,15 +252,116 @@ For now, I'm only documenting how to get Streaming API configuration. I will nee
 ```powershell
 # Get the current configuration of which services are using Unified RBAC
 (Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/wdatpApi/dataexportsettings" -ContentType "application/json" -WebSession $session -Headers $headers).value
+
 ```
 
 ## Asset rule management
 
+Asset rule management, also known as dynamic device tagging, allows us to use specific values to automatically apply tags to devices. The available options are Device Name, Domain, OS Platform, Internet facing, Onboarding status, and Device tags.
+
+For more info, see the [Asset rule management docs](https://learn.microsoft.com/en-us/defender-xdr/configure-asset-rules).
+
+```powershell
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/rulesengine/rules" -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+```
+
+This example will show using all available attributes, and we'll make a call to get available device tags to pick from :)
+
+```powershell
+# Get device tags
+$tags = Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/machines/allMachinesTags" -ContentType "application/json" -WebSession $session -Headers $headers
+
+"BuiltInTags","UserDefinedTags","DynamicRulesTags" | ForEach-Object { [array]$selectedTags += $tags.$_ | Out-GridView -PassThru }
+
+$body = @{
+    ruleId = ""
+    ruleName = "Internet Facing Servers"
+    ruleDescription = ""
+    ruleDefinition = @{
+        logicalOperator = "AND"
+        conditions = @(
+            @{ conditionType = "Simple"; predicate = @{ property = "InternetFacing"; operator = "Equals"; value = $true } }
+            @{ conditionType = "Simple"; predicate = @{ property = "OnboardingStatus"; operator = "In"; value = @("Onboarded") } }
+            @{
+                logicalOperator = "OR"
+                conditions = @(
+                    @{ conditionType = "Simple"; predicate = @{ property = "OSPlatform"; operator = "In"; value = @("WindowsServer2022";"WindowsServer2019";"WindowsServer2016";"WindowsServer2012R2";"WindowsServer2008R2";"Linux") } }
+                    @{ conditionType = "Simple"; predicate = @{ property = "DeviceName"; operator = "Equals"; value = "DMZ-HOST" } }
+                )
+                conditionType = "Operational"
+            }
+            @{
+                logicalOperator = "OR"
+                conditions = @(
+                    @{ conditionType = "Simple"; predicate = @{ property = "Domain"; operator = "Equals"; value = "sharemylabs.com" } }
+                    @{ conditionType = "Simple"; predicate = @{ property = "Tags"; operator = "In"; value = @($selectedTags) } }
+                )
+                conditionType = "Operational"
+            }
+        )
+        conditionType = "Operational"
+    }
+    isDisabled = $false
+    actions = @(@{ actionType = "TaggingAction"; value = "Monitor" })
+    ruleType = "Other"
+} | ConvertTo-Json -Depth 8
+
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/rulesengine/rules" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+```
 
 ## Alert tuning
 
+Alert tuning, also known as suppression rules, provide a way to reduce noise or automatically hide/resolve expected detections/alerts in our environment. This could be for testing tools, such as vulnerability scanners, or to reduce alert fatigue for specific alerts.
+
+Typically we import the details from an existing alert using the Tune alert button. Attempting to create alert tuning without metadata to work from is pretty complicated, and I'm mostly interested in finding alert tuning that has had no use or extremely high use ;)
+
+```powershell
+# Get a list of all suppression rules
+$suppressionRules = Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/suppressionRulesService/suppressionRules?" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Show suppression rules with no matching alerts
+$suppressionRules | Where-Object { $_.MatchingAlertsCount -eq 0 }
+
+# Show suppression rules with too many matching alerts
+$suppressionRules | Where-Object { $_.MatchingAlertsCount -eq 100 }
+
+```
 
 ## Critical asset management
 
+Critical asset management is part of the new exposure management solution. This is in Preview and will most likely be an add-on when released.
+
+As such, I'm not investing much time in this until it is final. This has a lot of data and is quite complex, but the below will at least retrieve all of the existing rules.
+
+```powershell
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/rulesengine/assetrules" -ContentType "application/json" -WebSession $session -Headers $headers).rules
+
+```
 
 ## Identity automated response
+
+Automatic attack disruption and other automated responess are extremely important and valuable, but there may be times when we don't want an account to get locked out, such as during security testing or anything that might impact critical systems.
+
+Here is how we can get the list of excluded users and add our own users to the list:
+
+```powershell
+# Get list of excluded users
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/disrupt/api/radius/uaas/v2/user-exclusion?top=20&skip=0" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Add a user to exclude
+$user = Get-MgUser -UserId "AdrianeMorrison@sharemylabs.com"
+
+$body = @{
+    ExcludedEntityIdentifiers = @(@{ 
+        DomainName = "$(($user.UserPrincipalName).Split('@')[-1])"
+        Id = ""
+        SystemDisplayName = "$($user.DisplayName)"
+        AadId ="$($user.Id)"
+    })
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/disrupt/api/radius/uaas/v2/user-exclusion" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+```
