@@ -59,7 +59,7 @@ $AllDevices | Select-Object rbacGroupId -Unique | ForEach-Object {
 
         # Add to group
         $Compare | Where-Object { $_.sideindicator -eq '<=' } | ForEach-Object {
-            Add-MgGroupMemberByRef -GroupId $group.Id -DirectoryObjectId $_
+            New-MgGroupMemberByRef -GroupId $group.Id -DirectoryObjectId $_
         }
     } else {
         $MDE | ForEach-Object { New-MgGroupmember -GroupId $group.Id -DirectoryObjectId $_ }
