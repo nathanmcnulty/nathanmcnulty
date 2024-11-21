@@ -14,7 +14,7 @@ New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $MI -AppRoleId $perm
 
 # Get MDE API access token
 Connect-AzAccount -Identity
-$token = (Get-AzAccessToken -ResourceUrl "https://api.securitycenter.microsoft.com/.default").token
+$token = (New-Object System.Management.Automation.PSCredential("token", (Get-AzAccessToken -ResourceUrl "https://api.securitycenter.microsoft.com/.default" -AsSecureString).token)).GetNetworkCredential().Password
 
 ## Set MDE API headers
 $headers = @{
@@ -24,10 +24,10 @@ $headers = @{
 }
 
 # Get all devices 
-$AllDevices = (Invoke-RestMethod -Uri "https://api.securitycenter.microsoft.com/api/machines?`$filter=aadDeviceId ne null&`$select=rbacGroupName,rbacGroupId,aadDeviceId" -Headers $headers).value | select-Object rbacGroupName,rbacGroupId,aadDeviceId
+$AllDevices = (Invoke-RestMethod -Uri "https://api.securitycenter.microsoft.com/api/machines?`$filter=aadDeviceId ne null&`$select=rbacGroupName,rbacGroupId,aadDeviceId" -Headers $headers).value | Select-Object rbacGroupName,rbacGroupId,aadDeviceId
 
 # Connect to Graph
-Connect-MgGraph -Identity -Scopes Group.ReadWrite.All
+Connect-MgGraph -Identity
 
 # Create groups if they don't exist or check if displayName needs to be updated
 $AllDevices | Select-Object rbacgroupName,rbacGroupId -Unique | ForEach-Object {
