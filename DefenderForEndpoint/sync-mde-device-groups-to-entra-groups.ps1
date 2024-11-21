@@ -54,12 +54,12 @@ $AllDevices | Select-Object rbacGroupId -Unique | ForEach-Object {
 
         # Remove from group
         $Compare | Where-Object { $_.sideindicator -eq '=>' } | ForEach-Object {
-            Remove-MgGroupMemberByRef -GroupId $group.Id -DirectoryObjectId $_
+            Remove-MgGroupMemberByRef -GroupId $group.Id -DirectoryObjectId $_.InputObject
         }
 
         # Add to group
         $Compare | Where-Object { $_.sideindicator -eq '<=' } | ForEach-Object {
-            New-MgGroupMemberByRef -GroupId $group.Id -DirectoryObjectId $_
+            New-MgGroupMemberByRef -GroupId $group.Id -DirectoryObjectId $_.InputObject
         }
     } else {
         $MDE | ForEach-Object { New-MgGroupmember -GroupId $group.Id -DirectoryObjectId $_ }
