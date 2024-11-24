@@ -1,9 +1,5 @@
-# Variables
-$tenantId = "<GUID>"
-$webhookUrl = "https://sub.domain.com"
-$contentType = "Audit.AzureActiveDirectory"
-
 # Connect to Graph API with proper scopes
+$tenantId = (Get-MgContext).TenantId
 Connect-MgGraph -Scopes "Application.ReadWrite.All","AppRoleAssignment.ReadWrite.All" -TenantId $tenantId
 
 # Create SP
@@ -22,6 +18,8 @@ $params = @{
 New-MgServicePrincipalAppRoleAssignedTo -ServicePrincipalId $sp.Id -BodyParameter $params
 
 # Get token for Office 365 Management Activity API
+$tenantId = (Get-MgContext).TenantId
+
 $body = @{
     grant_type = "client_credentials"
     resource = "https://manage.office.com"
@@ -36,6 +34,10 @@ $wr = @{
 $oauth = Invoke-RestMethod @wr
 
 # Start subscription using token against O365 Management Activity API
+$tenantId = (Get-MgContext).TenantId
+$contentType = "Audit.AzureActiveDirectory"
+$webhookUrl = "https://sub.domain.com/webhook"
+
 $body = @"
 {
     "webhook" : {
@@ -47,35 +49,32 @@ $wr = @{
     UseBasicParsing = $true
     Uri = "https://manage.office.com/api/v1.0/$tenantId/activity/feed/subscriptions/start?contentType=$contentType"
     Method = "POST"
-    Headers = @{
-        "Authorization"="$($oauth.token_type) $($oauth.access_token)"
-    }
+    Headers = @{ "Authorization"="$($oauth.token_type) $($oauth.access_token)" }
     Body = $body
     ContentType = "application/json"
 }
-$response = Invoke-WebRequest @wr
+$response = Invoke-RestMethod @wr
 
-### Other examples
 # Get subscriptions using token against O365 Management Activity API
+$tenantId = (Get-MgContext).TenantId
+
 $wr = @{
     UseBasicParsing = $true
     Uri = "https://manage.office.com/api/v1.0/$tenantId/activity/feed/subscriptions/list?"
     Method = "GET"
-    Headers = @{
-        "Authorization"="$($oauth.token_type) $($oauth.access_token)"
-    }
+    Headers = @{ "Authorization"="$($oauth.token_type) $($oauth.access_token)" }
     ContentType = "application/json"
 }
-$response = Invoke-WebRequest @wr
+$response = Invoke-RestMethod @wr
 
 # Stop subscription using token against O365 Management Activity API
+$tenantId = (Get-MgContext).TenantId
+
 $wr = @{
     UseBasicParsing = $true
-    Uri = "https://manage.office.com/api/v1.0/$tenantId/activity/feed/subscriptions/stop?contentType=Audit.AzureActiveDirectory"
+    Uri = "https://manage.office.com/api/v1.0/$tenantId/activity/feed/subscriptions/stop?contentType=$contentType"
     Method = "POST"
-    Headers = @{
-        "Authorization"="$($oauth.token_type) $($oauth.access_token)"
-    }
+    Headers = @{ "Authorization"="$($oauth.token_type) $($oauth.access_token)" }
     ContentType = "application/json"
 }
-$response = Invoke-WebRequest @wr
+$response = Invoke-RestMethod @wr
