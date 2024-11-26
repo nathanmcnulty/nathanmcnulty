@@ -14,7 +14,7 @@ This is a collection of commands that will help automate the configuration of th
 
 [Permissions - Roles](README.md#roles)
 
-[Permissions - Roles Device groups](README.md#device-groups)
+[Permissions - Device groups](README.md#device-groups)
 
 [Rules - Deception rules](README.md#deception-rules)
 
