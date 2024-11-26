@@ -6,29 +6,33 @@ This is a collection of commands that will help automate the configuration of th
 
 [Setting up our session and cookies](README.md#setting-up-our-session-and-cookies)
 
-[Advanced features](README.md#advanced-features)
+[General - Advanced features](README.md#advanced-features)
 
-[Licenses](README.md#licenses)
+[General - Licenses](README.md#licenses)
 
-[Email notifications](README.md#email-notifications)
+[General - Email notifications](README.md#email-notifications)
 
-[Roles](README.md#roles)
+[Permissions - Roles](README.md#roles)
 
-[Device groups](README.md#device-groups)
+[Permissions - Roles Device groups](README.md#device-groups)
 
-[Deception rules](README.md#deception-rules)
+[Rules - Deception rules](README.md#deception-rules)
 
-[Indicators](README.md#indicators)
+[Rules - Indicators](README.md#indicators)
 
-[Web content filtering](README.md#web-content-filtering)
+[Rules - Web content filtering](README.md#web-content-filtering)
 
-[Automation uploads](README.md#automation-uploads)
+[Rules - Automation uploads](README.md#automation-uploads)
 
-[Automation folder exclusions](README.md#automation-folder-exclusions)
+[Rules - Automation folder exclusions](README.md#automation-folder-exclusions)
 
-[Enforcement scope](README.md#enforcement-scope)
+[Configuration management- Enforcement scope](README.md#enforcement-scope)
 
-[Intune permissions](README.md#intune-permissions)
+[Configuration management - Intune permissions](README.md#intune-permissions)
+
+[Device management - Onboarding](README.md#onboarding)
+
+[Device management - Offboarding](README.md#offboarding)
 
 ## Setting up our session and cookies
 
@@ -43,25 +47,28 @@ Under headers, scroll down under the cookies section, copy the value after sccau
 Now we can create a session with those cookies:
 
 ```powershell
-# Create session to store cookies in
-$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-
 # Copy sccauth from the browser
 $sccauth = Get-Clipboard
-$session.Cookies.Add((New-Object System.Net.Cookie("sccauth", "$sccauth", "/", "security.microsoft.com")))
 
 # Copy xsrf token from the browser
 $xsrf = Get-Clipboard
+
+# Create session and cookies
+$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$session.Cookies.Add((New-Object System.Net.Cookie("sccauth", "$sccauth", "/", "security.microsoft.com")))
 $session.Cookies.Add((New-Object System.Net.Cookie("XSRF-TOKEN", "$xsrf", "/", "security.microsoft.com")))
 
 # Set the headers to include the xsrf token
 [Hashtable]$Headers=@{}
 $headers["X-XSRF-TOKEN"] = [System.Net.WebUtility]::UrlDecode($session.cookies.GetCookies("https://security.microsoft.com")['xsrf-token'].Value)
+
 ```
 
 With this complete, we can now make requests to the internal API :)
 
-## Advanced features
+## General
+
+### Advanced features
 
 The body below will enable most options in Advanced features except "Restrict correlation to within scoped device groups​" which is not applicable to most organizations. Some settings, such as Live Response and Deception require additional API calls.
 
@@ -100,6 +107,7 @@ $body = @{
 } | ConvertTo-Json
 
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/settings/SaveAdvancedFeaturesSetting" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
 
 | Feature Name | Recommended Value | Description |
@@ -148,39 +156,45 @@ $body = @{
     }
 } | ConvertTo-Json
 Invoke-RestMethod -Method "PATCH" -Uri "https://security.microsoft.com/apiproxy/mtp/liveResponseApi/update_properties?useV2Api=true&useV3Api=true" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
 
 To enable Deception:
 
 ```powershell
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/deception/portal/deceptionsettings/update" -Body "{`"isDeceptionEnabled` =true}" -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
 
 To enable Share endpoint alerts with Microsoft Compliance Center:
 
 ```powershell
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/wdatpInternalApi/compliance/alertSharing/status/" -Body "true" -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
 
 To enable Microsoft Intune connection:
 
 ```powershell
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/responseApiPortal/onboarding/intune/provision" -Body "{`"timeout` =60000}" -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
 
 To enable Authenticated telemetry:
 
 ```powershell
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/responseApiPortal/senseauth/allownonauthsense" -Body "{`"allowNonAuthenticatedSense` =true}" -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
 
 To enable Preview features:
 
 ```powershell
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/settings/SavePreviewExperienceSetting?context=MdatpContext" -Body "{`"IsOptIn` =true}" -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
 
-## Licenses
+### Licenses
 
 This section is mostly for usage check, but for environments with M365 Business Premium / Defender for Business, we can define the licensing level as Defender for Business or Defender for Endpoint P2. Next time I get access to a Defender for Business environment, I will try to map out those settings.
 
@@ -192,9 +206,10 @@ This will kick back the license usage details:
 
 # Get usage
 (Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8sMachineApi/ine/machineapiservice/machines/skuReport" -ContentType "application/json" -WebSession $session -Headers $headers).Sums
+
 ```
 
-## Email notifications
+### Email notifications
 
 I recommend moving to Defender XDR email notifications. Once I complete mapping out that API, I will publish that under the Defender XDR section and link to it from here :) 
 
@@ -204,12 +219,16 @@ Here's how we can get existing email notification settings, and later I'll figur
 # Get Alerts notifications
 (Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/alertsEmailNotifications/email_notifications" -ContentType "application/json" -WebSession $session -Headers $headers).items
 
+
 # Get vulnerability notifications
 $headers["api-version"] = "1.0"
 Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/tvm/orgsettings/vulnerability-notification-rules" -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
 
-## Roles
+## Permissions
+
+### Roles
 
 To simplify and future-proof, we are going to enable and set up roles in the newer Unified RBAC. If you have existing roles in MDE, you might want to import existing roles before changing to the Unified RBAC. The following will automate importing existing roles that haven't alreay been imported.
 
@@ -235,6 +254,7 @@ $mderbac.originalId | ForEach-Object {
         (Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/urbacConfiguration/gw/unifiedrbac/configuration/migration/importedRoleDefinitions/" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers -Verbose).value
     }
 }
+
 ```
 
 Now that the roles have been imported, we can enable Unified RBAC. This requires an additional header indicating the API version:
@@ -243,6 +263,7 @@ Now that the roles have been imported, we can enable Unified RBAC. This requires
 # Enable Unified RBAC for Defender for Endpoint
 $headers["api-version"] = "2.0"
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/urbacConfiguration/gw/unifiedrbac/configuration/enablement/?workload=Mde" -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
 
 To create a read-only role:
@@ -277,10 +298,12 @@ $body = @{
     } )
     isEnabled = $true
 } | ConvertTo-Json -Depth 4
+
 (Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/urbacConfiguration/gw/unifiedrbac/configuration/roleDefinitions/" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers -Verbose).value
+
 ```
 
-## Device groups
+### Device groups
 
 Device groups provide a way for us to scope RBAC permissions and certain features, such as Indicators and Web Content Filtering. Typically creating one or two device groups is sufficient for small orgs, but larger orgs may require many device groups.
 
@@ -390,9 +413,12 @@ $PrivServers,$NonPrivServers,$PrivEndpoints,$NonPrivEndpoints | ForEach-Object {
     Remove-Variable existingGroups,body
     Start-Sleep -Seconds 15
 }
+
 ```
 
-## Deception rules
+## Rules
+
+### Deception rules
 
 After enabling the deception feature, we can enable the default deception rule as well as create our own rules / lures. I always recommend enabling at least the default rule, and so I'll show how to detect if it is enabled and how to enable it if it isn't.
 
@@ -402,6 +428,7 @@ $response = Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/
 if ($response.isEnabled -eq $false) {
   Invoke-RestMethod -Method "PUT" -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/deception/portal/deceptionrules/ffffffff-ffff-ffff-ffff-ffffffffffff/updatestate?isEnabled=true" -ContentType "application/json" -WebSession $session -Headers $headers
 }
+
 ```
 
 This is an example of how we could generate our own rule set instead. This will likely throw conflicts if we have the default rule enabled due to sharing the same default IPs for the hosts. Using custom IPs could result in false positives, but I will try to document that later.
@@ -420,9 +447,10 @@ $body = @{
 } | ConvertTo-Json -Depth 4
 
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/deception/portal/deceptionrules" -ContentType "application/json" -Body $body -WebSession $session -Headers $headers
+
 ```
 
-## Indicators
+### Indicators
 
 Indicators have an official API endpoint and should be managed through those endpoints. There are technically two endpoints, one that handles with individual incidacators and a second that handles bulk (import) indicators. For most of our automation, we are interested in the import API.
 
@@ -430,7 +458,7 @@ Indicators have an official API endpoint and should be managed through those end
 
 [Example script for import](https://github.com/nathanmcnulty/nathanmcnulty/blob/master/DefenderForEndpoint/MDE-API-ImportIndicator.ps1)
 
-## Web content filtering
+### Web content filtering
 
 I will have to map out each category to their ID later, but this is a basic example of blocking categories that are higher risk while trying to still be mostly open.
 
@@ -450,9 +478,10 @@ $body = @{
 } | ConvertTo-Json
 
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/userRequests/webcategory/policy" -ContentType "application/json" -Body $body -WebSession $session -Headers $headers
+
 ```
 
-## Automation uploads
+### Automation uploads
 
 This controls how automated investigation handles sample submission, which file types are allowed to be uploaded, and whether memory contents should be analyzed. This specific API call requires the "tenant-id" header with your tenantId in it.
 
@@ -469,9 +498,10 @@ $body = @{
 } | ConvertTo-Json
 
 Invoke-RestMethod -Method "PATCH" -Uri "https://security.microsoft.com/apiproxy/mtp/autoIr/admin/advanced" -ContentType "application/json" -Body $body -WebSession $session -Headers $headers
+
 ```
 
-## Automation folder exclusions
+### Automation folder exclusions
 
 I'm capturing these details to check if we have anything configured. For Maester tests, may attempt to add some logic to check for poorly defined exclusions or something :)
 
@@ -488,9 +518,12 @@ $body = @{
 } | ConvertTo-Json
 
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/autoIr/folder_exclusion/all" -ContentType "application/json" -Body $body -WebSession $session -Headers $headers
+
 ```
 
-## Enforcement scope
+## Configuration Management
+
+### Enforcement scope
 
 For now, just mapping the API endpoints for getting values.
 
@@ -507,6 +540,7 @@ $response
 
 # mdeEnabled : 0 means disabled, 1 means on all devices, 2 means on tagged devices
 $response.osFamilies
+
 ```
 
 There's a preview feature for managing security settings on Domain Controllers, and these are the two API endpoints for that:
@@ -515,9 +549,10 @@ There's a preview feature for managing security settings on Domain Controllers, 
 Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/siamApi/domaincontrollers/totals" -ContentType "application/json" -WebSession $session -Headers $headers
 
 Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/siamApi/domaincontrollers/list" -ContentType "application/json" -WebSession $session -Headers $headers
+
 ```
 
-## Intune permissions
+### Intune permissions
 
 Any groups assigned here are granted the Endpoint security managers role in Intune. This will show how to get an existing list as well as how to add a group.
 
@@ -534,4 +569,95 @@ $memberIds += "f500e338-db07-4fbd-a77a-f2e9bf11810d"
 $body = @{ membersIds = @( $memberIds ) } | ConvertTo-Json
 
 Invoke-RestMethod -Method "PUT" -Uri "https://security.microsoft.com/apiproxy/mtp/siamApi/MemPermissions/MemRoleAssignment" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+```
+
+## Device Management
+
+### Onboarding
+
+The URL to download the onboarding package is the same but changes some values based on the management type and connectivity mode. It is highly recommended to use Streamlined Connectivity to simplify network / ZTNA management.
+
+This table contains the management tool (mgmtTool) value you'll use depending on what you need:
+
+| OS | Method | Value | Docs |
+| ------ | ------ | ------ | ------ |
+| Windows | Group Policy | 0 | [Onboard Windows devices using Group Policy](https://learn.microsoft.com/en-us/defender-endpoint/configure-endpoints-gp) |
+| Windows | Intune/MDM | 2 | [Onboard Windows devices to Defender for Endpoint using Intune](https://learn.microsoft.com/en-us/defender-endpoint/configure-endpoints-mdm) |
+| Windows | Configuration Manager | 2 | [Onboard Windows devices using Configuration Manager](https://learn.microsoft.com/en-us/defender-endpoint/configure-endpoints-sccm) |
+| Windows | Script | 4 | [Onboard Windows devices using a local script](https://learn.microsoft.com/en-us/defender-endpoint/configure-endpoints-script) |
+| Windows | VDI | 5 | [Onboard non-persistent virtual desktop infrastructure (VDI) devices](https://learn.microsoft.com/en-us/defender-endpoint/configure-endpoints-vdi) |
+| macOS | MDM / Intune | 6 | [Microsoft Defender for Endpoint on Mac](https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-endpoint-mac) |
+| macOS | Script | 7 | [Microsoft Defender for Endpoint on Mac](https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-endpoint-mac) |
+| Linux | Configuration Management Tools | 8 | [Microsoft Defender for Endpoint on Linux](https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-endpoint-linux) |
+| Linux | Script | 9 | [Microsoft Defender for Endpoint on Linux](https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-endpoint-linux) |
+
+This table contains the connectivity mode (channelRouting) value you'll use depending on what you need (recommend streamlined connectivity):
+
+| Mode | Value | Docs |
+| ------ | ------ | ------ |
+| Standard Connectivity | 1 | [Standard Connectivity](https://learn.microsoft.com/en-us/defender-endpoint/configure-environment) |
+| Streamlined Connectivity | 2 | [Streamlined Connectivity](https://learn.microsoft.com/en-us/defender-endpoint/configure-device-connectivity) |
+
+To download the onboarding script, we set our mgmtTool and channelRouting values and run the following:
+
+```powershell
+# Example downloading onboarding script for Group Policy using Streamlined Connectivity, note mgmtTool and channelRouting values at the end of the URL
+$mgmtTool = 0
+$channelRouting = 2
+$url = Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/packages/DownloadOnboardingPackage?mgmtTool=$mgmtTool&channelRouting=$channelRouting" -ContentType "application/json" -WebSession $session -Headers $headers
+Invoke-WebRequest -Uri $url -OutFile "$env:USERPROFILE\Downloads\GatewayWindowsDefenderATPOnboardingPackage.zip"
+Expand-Archive -Path "$env:USERPROFILE\Downloads\GatewayWindowsDefenderATPOnboardingPackage.zip"
+
+```
+
+Server 2012/2016 require an downloading the Unified MDE agent, and you can always get the latest version like this:
+
+```powershell
+$version = (Invoke-RestMethod -Uri 'https://www.microsoft.com/security/encyclopedia/adlpackages.aspx?action=info').versions.platform
+Invoke-WebRequest -Uri "https://definitionupdates.microsoft.com/download/DefinitionUpdates/platform/$version/x64/md4ws.msi" -OutFile "$env:USERPROFILE\Downloads\md4ws.msi"
+
+```
+
+I haven't captured how to get the latest macOS link, but this is the most current as of 2024/11/26:
+
+```powershell
+# Get MDE for macOS installation package
+Invoke-WebRequest -Uri "https://officecdn-microsoft-com.akamaized.net/pr/C1297A47-86C4-4C1F-97FA-950631F94777/MacAutoupdate/wdav.pkg" -OutFile "$env:USERPROFILE\Downloads\wdav.pkg"
+
+```
+
+I haven't captured how to get the latest macOS link, but this is the most current as of 2024/11/26:
+
+```powershell
+# Get WSL2 plug-in installation package
+Invoke-WebRequest -Uri "https://definitionupdates.microsoft.com/download/DefinitionUpdates/wsl/1.24.1106.2/x64/defenderplugin-x64-1.24.1106.2.msi" -OutFile "$env:USERPROFILE\Downloads\defenderplugin-x64-1.24.1106.2.msi"
+
+```
+
+### Offboarding
+
+The URL to download the offboarding package is the same but changes some values based on the management type.
+
+This table contains the management tool (mgmtTool) value you'll use depending on what you need:
+
+| OS | Method | Value | Docs |
+| ------ | ------ | ------ | ------ |
+| Windows | Group Policy | 0 | [Onboard Windows devices using Group Policy](https://learn.microsoft.com/en-us/defender-endpoint/configure-endpoints-gp) |
+| Windows | Intune/MDM | 2 | [Onboard Windows devices to Defender for Endpoint using Intune](https://learn.microsoft.com/en-us/defender-endpoint/configure-endpoints-mdm) |
+| Windows | Configuration Manager | 2 | [Onboard Windows devices using Configuration Manager](https://learn.microsoft.com/en-us/defender-endpoint/configure-endpoints-sccm) |
+| Windows | Script | 4 | [Onboard Windows devices using a local script](https://learn.microsoft.com/en-us/defender-endpoint/configure-endpoints-script) |
+| macOS | MDM / Intune | 6 | [Microsoft Defender for Endpoint on Mac](https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-endpoint-mac) |
+| macOS | Script | 7 | [Microsoft Defender for Endpoint on Mac](https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-endpoint-mac) |
+| Linux | Configuration Management Tools | 8 | [Microsoft Defender for Endpoint on Linux](https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-endpoint-linux) |
+| Linux | Script | 9 | [Microsoft Defender for Endpoint on Linux](https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-endpoint-linux) |
+
+```powershell
+# Example downloading offboarding script for Group Policy using Streamlined Connectivity, note mgmtTool and channelRouting values at the end of the URL
+$mgmtTool = 0
+$url = Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/packages/DownloadOffboardingPackage?mgmtTool=$mgmtTool" -ContentType "application/json" -WebSession $session -Headers $headers
+$filename = $url.Split('/')[-1].Split('?')[0]
+Invoke-WebRequest -Uri $url -OutFile "$env:USERPROFILE\Downloads\$filename"
+Expand-Archive -Path "$env:USERPROFILE\Downloads\$filename"
+
 ```
