@@ -37,12 +37,14 @@ $report = Get-MgReportAuthenticationMethodUserRegistrationDetail | Where-Object 
 $report | Select-Object UserPrincipalName,IsMfaCapable,UserPreferredMethodForSecondaryAuthentication,MethodsRegistered | Sort-Object IsMfaCapable  | Format-Table -Wrap
 
 <# Add MFA capable users to a group
+$groupId = (Get-MgGroup -Filter "DisplayName eq 'Enforce MFA'").Id
 $report | Where-Object { $_.IsMfaCapable -eq $true } | ForEach-Object { 
     New-MgGroupMember -GroupId $groupId -DirectoryObjectId $_.Id
 }
 #>
 
 <# Registration campgain my support passkeys in the future, here's the examples for that:
+$groupId = (Get-MgGroup -Filter "DisplayName eq 'Enforce passkeys'").Id
 $report | Where-Object { "passKeyDeviceBoundAuthenticator" -in $_.MethodsRegistered } | ForEach-Object { 
     New-MgGroupMember -GroupId $groupId -DirectoryObjectId $_.Id
 }
