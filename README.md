@@ -8,9 +8,11 @@ I am currently a Senior Security Solutions Architect for Patriot Consulting prim
 # Follow me :)
 <a href="https://blog.nathanmcnulty.com">Blog</a>
 
-<a rel="me" href="https://infosec.exchange/@nathanmcnulty">Mastodon</a>
+<a href="https://bsky.app/profile/nathanmcnulty.com">Bluesky</a>
 
 <a href="https://twitter.com/nathanmcnulty">Twitter</a>
+
+<a rel="me" href="https://infosec.exchange/@nathanmcnulty">Mastodon</a>
 
 # 
 # Requests
