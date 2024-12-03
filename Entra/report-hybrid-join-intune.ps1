@@ -10,10 +10,10 @@ Param(
 )
 
 # Create arrays for reporting
-[array]$NotStartedReport = @()
-[array]$PendingReport = @()
-[array]$CompletedReport = @()
-[array]$NotEnrolledReport = @()
+$NotStartedReport = New-Object System.Collections.ArrayList
+$PendingReport = New-Object System.Collections.ArrayList
+$CompletedReport = New-Object System.Collections.ArrayList
+$NotEnrolledReport = New-Object System.Collections.ArrayList
 
 $ou.DistinguishedName | ForEach-Object {
     Write-Output "`nGetting a list of all devices in $_"
@@ -21,7 +21,7 @@ $ou.DistinguishedName | ForEach-Object {
 
     if ($NotStarted -or $All) {
         Write-Output "Getting a list of devices that have not read the SCP and added their certificate into AD"
-        $NotStartedReport += $devices | Where-Object { [string]::IsNullOrEmpty($_.userCertificate) }
+        $devices | Where-Object { [string]::IsNullOrEmpty($_.userCertificate) } | ForEach-Object { $NotStartedReport.Add($_) } | Out-Null
     }
 
     if ($Pending -or $All) {
@@ -29,7 +29,7 @@ $ou.DistinguishedName | ForEach-Object {
         if (!(Get-MgContext)) { Connect-MgGraph }
         Get-MgDevice -All | Where-Object { ($_.TrustType -eq 'ServerAd') -and ($_.ProfileType -ne 'RegisteredDevice') } | ForEach-Object {
             $deviceId = $_.DeviceId
-            $PendingReport += $devices | Where-Object { $_.objectGUID -eq $deviceId }
+            $devices | Where-Object { $_.objectGUID -eq $deviceId } | ForEach-Object { $PendingReport.Add($_) } | Out-Null
         }
     }
 
@@ -38,7 +38,7 @@ $ou.DistinguishedName | ForEach-Object {
         if (!(Get-MgContext)) { Connect-MgGraph }
         Get-MgDevice -All | Where-Object { ($_.TrustType -eq 'ServerAd') -and ($_.ProfileType -eq 'RegisteredDevice') } | ForEach-Object {
             $deviceId = $_.DeviceId
-            $CompletedReport += $devices | Where-Object { $_.objectGUID -eq $deviceId }
+            $devices | Where-Object { $_.objectGUID -eq $deviceId } | ForEach-Object { $CompletedReport.Add($_) } | Out-Null
         }
     }
 
@@ -47,7 +47,7 @@ $ou.DistinguishedName | ForEach-Object {
         if (!(Get-MgContext)) { Connect-MgGraph }
         Get-MgDevice -All | Where-Object { ($_.TrustType -eq 'ServerAd') -and ($_.ProfileType -eq 'RegisteredDevice') -and ($_.MdmAppId -ne '0000000a-0000-0000-c000-000000000000') } | ForEach-Object {
             $deviceId = $_.DeviceId
-            $NotEnrolledReport += $devices | Where-Object { $_.objectGUID -eq $deviceId }
+            $devices | Where-Object { $_.objectGUID -eq $deviceId } | ForEach-Object { $NotEnrolledReport.Add($_) } | Out-Null
         }
     }
 }
