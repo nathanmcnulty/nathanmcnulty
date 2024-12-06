@@ -49,15 +49,15 @@ Under headers, scroll down under the cookies section, copy the value after sccau
 Now we can create a session with those cookies:
 
 ```powershell
-# Create session to store cookies in
-$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-
 # Copy sccauth from the browser
 $sccauth = Get-Clipboard
-$session.Cookies.Add((New-Object System.Net.Cookie("sccauth", "$sccauth", "/", "security.microsoft.com")))
 
 # Copy xsrf token from the browser
 $xsrf = Get-Clipboard
+
+# Create session and cookies
+$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$session.Cookies.Add((New-Object System.Net.Cookie("sccauth", "$sccauth", "/", "security.microsoft.com")))
 $session.Cookies.Add((New-Object System.Net.Cookie("XSRF-TOKEN", "$xsrf", "/", "security.microsoft.com")))
 
 # Set the headers to include the xsrf token
@@ -97,6 +97,8 @@ Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspa
 
 # Get sensor download
 $url = Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/api/sensors/deploymentPackageUri" -ContentType "application/json" -WebSession $session -Headers $headers
+
+Invoke-WebRequest -Uri $url -OutFile "$env:USERPROFILE\Downloads\Azure ATP Sensor Setup.zip"
 
 ```
 
@@ -299,25 +301,251 @@ Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/api/mtp/app
 
 ### Sensitive
 
-Sensitive
+Sensitive accounts are used to identify high-value assets which are used by some detections. The lateral movement path also relies on an entity's sensitivity status. There are three types of sensitive entity tags - users, devices, and groups. [Learn more](https://aka.ms/MDI/EntityTags)
+
+For users, remember that these identities could be from non-Entra sources, so we have to use the object IDs from Defender for Identity.
 
 ```powershell
+# Get list of current sensitive users (first 100, adjust filter if you want more)
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/odata/TaggedSecurityPrincipals?`$filter=Type%20eq%20%27User%27%20and%20TagTypes%20has%20%27Sensitive%27&`$count=true&`$top=100&`$skip=0" -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Get list of users (first 100, adjust filter if you want more)
+$body = @{ SearchType = "User" } | ConvertTo-Json
+
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27Sensitive%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Search users by name (first 100, adjust filter if you want more)
+$body = @{
+  SearchType = "User"
+  Filter = "Nathan"
+} | ConvertTo-Json
+
+$users = New-Object System.Collections.ArrayList
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27Sensitive%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value | Out-GridView -PassThru | ForEach-Object { $users.Add($_.Id) | Out-Null }
+
+# Add sensitive tag for users
+$body = @{
+    EntitiesType = "User"
+    TagType = @("Sensitive")
+    SecurityPrincipalIds = $users
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/tagging" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Remove sensitive tag for users
+$body = @{
+    EntitiesType = "User"
+    TagType = @("Sensitive")
+    SecurityPrincipalIds = $users
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/tagging" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+```
+
+For devices:
+
+```powershell
+# Get list of current sensitive devices (first 100, adjust filter if you want more)
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/odata/TaggedSecurityPrincipals?`$filter=Type%20eq%20%27Computer%27%20and%20TagTypes%20has%20%27Sensitive%27&`$count=true&`$top=100&`$skip=0" -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Get list of devices (first 100, adjust filter if you want more)
+$body = @{ SearchType = "Computer" } | ConvertTo-Json
+
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27Sensitive%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Search devices by name (first 100, adjust filter if you want more)
+$body = @{
+  SearchType = "Computer"
+  Filter = "sml"
+} | ConvertTo-Json
+
+$computers = New-Object System.Collections.ArrayList
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27Sensitive%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value | Where-Object { $_.Id -match '.{8}-.{4}-.{4}-.{4}-.{12}' } | Out-GridView -PassThru | ForEach-Object { $computers.Add($_.Id) | Out-Null }
+
+# Add sensitive tag for computers
+$body = @{
+    EntitiesType = "Computer"
+    TagType = @("Sensitive")
+    SecurityPrincipalIds = $computers
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/tagging" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Remove sensitive tag for computers
+$body = @{
+    EntitiesType = "Computer"
+    TagType = @("Sensitive")
+    SecurityPrincipalIds = $computers
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/tagging" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+```
+
+For groups:
+
+```powershell
+# Get list of current sensitive groups (first 100, adjust filter if you want more)
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/odata/TaggedSecurityPrincipals?`$filter=Type%20eq%20%27Group%27%20and%20TagTypes%20has%20%27Sensitive%27&`$count=true&`$top=100&`$skip=0" -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Get list of groups (first 100, adjust filter if you want more)
+$body = @{ SearchType = "Group" } | ConvertTo-Json
+
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27Sensitive%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Search group by name (first 100, adjust filter if you want more)
+$body = @{
+  SearchType = "Group"
+  Filter = "sml"
+} | ConvertTo-Json
+
+$groups = New-Object System.Collections.ArrayList
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27Sensitive%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value | Out-GridView -PassThru | ForEach-Object { $groups.Add($_.Id) | Out-Null }
+
+# Add sensitive tag for groups
+$body = @{
+    EntitiesType = "Group"
+    TagType = @("Sensitive")
+    SecurityPrincipalIds = $groups
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/tagging" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Remove sensitive tag for groups
+$body = @{
+    EntitiesType = "Group"
+    TagType = @("Sensitive")
+    SecurityPrincipalIds = $groups
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/tagging" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
 
 ```
 
 ### Honeytoken
 
-Honeytoken
+Honeytoken accounts are used as traps for malicious actors. Any authentication associated with these honeytoken accounts triggers an alert. There are two types of honeytoken accounts we can create - users and devices. [Learn more](https://aka.ms/MDI/EntityTags)
+
+For users:
 
 ```powershell
+# Get list of current users tagged as honeytokens
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/odata/TaggedSecurityPrincipals?`$filter=Type%20eq%20%27User%27%20and%20TagTypes%20has%20%27Honeytoken%27&`$count=true&`$top=100&`$skip=0" -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Get list of users (first 100, adjust filter if you want more)
+$body = @{ SearchType = "User" } | ConvertTo-Json
+
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27Honeytoken%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Search users by name (first 100, adjust filter if you want more)
+$body = @{
+  SearchType = "User"
+  Filter = "Albert"
+} | ConvertTo-Json
+
+$users = New-Object System.Collections.ArrayList
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27Honeytoken%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value | Out-GridView -PassThru | ForEach-Object { $users.Add($_.Id) | Out-Null }
+
+# Tag users as honeytokens
+$body = @{
+    EntitiesType = "User"
+    TagType = @("Honeytoken")
+    SecurityPrincipalIds = $users
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/tagging" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Untag users as honeytokens
+$body = @{
+    EntitiesType = "User"
+    TagType = @("Honeytoken")
+    SecurityPrincipalIds = $users
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/tagging" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+```
+
+For devices:
+
+```powershell
+# Get list of current sensitive devices (first 100, adjust filter if you want more)
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/odata/TaggedSecurityPrincipals?`$filter=Type%20eq%20%27Computer%27%20and%20TagTypes%20has%20%27Honeytoken%27&`$count=true&`$top=100&`$skip=0" -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Get list of devices (first 100, adjust filter if you want more)
+$body = @{ SearchType = "Computer" } | ConvertTo-Json
+
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27Honeytoken%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Search devices by name (first 100, adjust filter if you want more)
+$body = @{
+  SearchType = "Computer"
+  Filter = "sml"
+} | ConvertTo-Json
+
+$computers = New-Object System.Collections.ArrayList
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27Honeytoken%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value | Where-Object { $_.Id -match '.{8}-.{4}-.{4}-.{4}-.{12}' } | Out-GridView -PassThru | ForEach-Object { $computers.Add($_.Id) | Out-Null }
+
+# Tag devices as honeytokens
+$body = @{
+    EntitiesType = "Computer"
+    TagType = @("Honeytoken")
+    SecurityPrincipalIds = $computers
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/tagging" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Untag users as honeytokens
+$body = @{
+    EntitiesType = "Computer"
+    TagType = @("Honeytoken")
+    SecurityPrincipalIds = $computers
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/tagging" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
 
 ```
 
 ### Exchange servers
 
-Exchange servers
+Tag devices as Exchange servers. Microsoft Defender for Identity considers Exchange servers as high-value assets and automatically tags them as Sensitive. [Learn more](https://aka.ms/MDI/EntityTags)
 
 ```powershell
+# Get list of current exchange servers (first 100, adjust filter if you want more)
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/odata/TaggedSecurityPrincipals?`$filter=Type%20eq%20%27Computer%27%20and%20TagTypes%20has%20%27ExchangeServer%27&`$count=true&`$top=100&`$skip=0" -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Get list of devices (first 100, adjust filter if you want more)
+$body = @{ SearchType = "Computer" } | ConvertTo-Json
+
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27ExchangeServer%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Search devices by name (first 100, adjust filter if you want more)
+$body = @{
+  SearchType = "Computer"
+  Filter = "sml"
+} | ConvertTo-Json
+
+$computers = New-Object System.Collections.ArrayList
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27ExchangeServer%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value | Where-Object { $_.Id -match '.{8}-.{4}-.{4}-.{4}-.{12}' } | Out-GridView -PassThru | ForEach-Object { $computers.Add($_.Id) | Out-Null }
+
+# Tag devices as an Exchange server
+$body = @{
+    EntitiesType = "Computer"
+    TagType = @("ExchangeServer")
+    SecurityPrincipalIds = $computers
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/tagging" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Untag users as an Exchange server
+$body = @{
+    EntitiesType = "Computer"
+    TagType = @("ExchangeServer")
+    SecurityPrincipalIds = $computers
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/tagging" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
 
 ```
 
