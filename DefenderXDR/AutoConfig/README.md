@@ -37,15 +37,15 @@ Under headers, scroll down under the cookies section, copy the value after sccau
 Now we can create a session with that cookie:
 
 ```powershell
-# Create session to store cookies in
-$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-
 # Copy sccauth from the browser
 $sccauth = Get-Clipboard
-$session.Cookies.Add((New-Object System.Net.Cookie("sccauth", "$sccauth", "/", "security.microsoft.com")))
 
 # Copy xsrf token from the browser
 $xsrf = Get-Clipboard
+
+# Create session and cookies
+$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$session.Cookies.Add((New-Object System.Net.Cookie("sccauth", "$sccauth", "/", "security.microsoft.com")))
 $session.Cookies.Add((New-Object System.Net.Cookie("XSRF-TOKEN", "$xsrf", "/", "security.microsoft.com")))
 
 # Set the headers to include the xsrf token
@@ -204,7 +204,7 @@ While we can get and set Unified RBAC roles using Graph API, I haven't found a G
 
 ```powershell
 # Get list of available permissions
-$permissions = (Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/urbacConfiguration/gw/unifiedrbac/configuration/permissions/" -ContentType "application/json" -WebSes
+$permissions = (Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/urbacConfiguration/gw/unifiedrbac/configuration/permissions/" -ContentType "application/json" -WebSession $session -Headers $headers
 
 # Show permissions applicable to MDE
 $permissions | Where-Object { $_.appScopeIds -contains "Mde" }
@@ -262,18 +262,32 @@ Asset rule management, also known as dynamic device tagging, allows us to use sp
 For more info, see the [Asset rule management docs](https://learn.microsoft.com/en-us/defender-xdr/configure-asset-rules).
 
 ```powershell
-(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/rulesengine/rules" -ContentType "application/json" -WebSession $session -Headers $headers).value
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/rulesengine/rules" -ContentType "application/json" -WebSession $session -Headers $headers).rules
 
 ```
 
-This example will show using all available attributes, and we'll make a call to get available device tags to pick from :)
+This example shows how to get all available tags and select tags to include in a rule:
 
 ```powershell
 # Get device tags
 $tags = Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/machines/allMachinesTags" -ContentType "application/json" -WebSession $session -Headers $headers
 
-"BuiltInTags","UserDefinedTags","DynamicRulesTags" | ForEach-Object { [array]$selectedTags += $tags.$_ | Out-GridView -PassThru }
+$selectedTags = New-Object System.Collections.ArrayList
+$tags.BuiltInTags | Out-GridView -PassThru | ForEach-Object { $selectedTags.Add($_) | Out-Null }
+$tags.UserDefinedTags | Out-GridView -PassThru | ForEach-Object { $selectedTags.Add($_) | Out-Null }
+$tags.DynamicRulesTags | Out-GridView -PassThru | ForEach-Object { $selectedTags.Add($_) | Out-Null }
 
+# Get devices with selected tags
+$selectedTags | ForEach-Object { 
+    Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/machines?machineTags=$_" -ContentType "application/json" -WebSession $session -Headers $headers
+
+    Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/machines?DynamicRulesTags=$_" -ContentType "application/json" -WebSession $session -Headers $headers
+}   
+```
+
+This example shows how to create a rule using all available attributes/options:
+
+```powershell
 $body = @{
     ruleId = ""
     ruleName = "Internet Facing Servers"
@@ -308,6 +322,47 @@ $body = @{
 } | ConvertTo-Json -Depth 8
 
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/rulesengine/rules" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+```
+
+This example shows how to turn rules on and off:
+
+```powershell
+# Get rule(s) to turn on / off
+$rules = (Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/rulesengine/rules" -ContentType "application/json" -WebSession $session -Headers $headers).rules | Out-GridView -PassThru
+
+# Turn rules on
+$rules | ForEach-Object { 
+    $body = @{
+        ruleId = $_.ruleId
+        isDisabled = $false
+    } | ConvertTo-Json
+
+    Invoke-RestMethod -Method "PATCH" -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/rulesengine/rules/$_" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+}
+
+# Turn rules off
+$rules | ForEach-Object { 
+    $body = @{
+        ruleId = $_.ruleId
+        isDisabled = $true
+    } | ConvertTo-Json
+
+    Invoke-RestMethod -Method "PATCH" -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/rulesengine/rules/$_" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+}
+
+```
+
+To delete a rule:
+
+```powershell
+# Get rule(s) to delete
+$rules = (Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/rulesengine/rules" -ContentType "application/json" -WebSession $session -Headers $headers).rules | Out-GridView -PassThru
+
+# Delete selected rules
+$rules | ForEach-Object { 
+    Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/rulesengine/rules/$_" -ContentType "application/json" -WebSession $session -Headers $headers
+}
 
 ```
 
