@@ -76,7 +76,7 @@ We can check and see if the Defender for Identity workspace has been created yet
 # Check if workspace exists
 Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspaces/isWorkspaceExists/" -ContentType "application/json" -WebSession $session -Headers $headers
 
-# If 
+# Next time I spin up a new tenant, I'll document creation, lol
 
 ```
 ## General
@@ -361,7 +361,7 @@ $body = @{
 } | ConvertTo-Json
 
 $computers = New-Object System.Collections.ArrayList
-(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27Sensitive%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value | Where-Object { $_.Id -match '.{8}-.{4}-.{4}-.{4}-.{12}' } | Out-GridView -PassThru | ForEach-Object { $computers.Add($_.Id) | Out-Null }
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27Sensitive%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value | Out-GridView -PassThru | ForEach-Object { $computers.Add($_.Id) | Out-Null }
 
 # Add sensitive tag for computers
 $body = @{
@@ -470,7 +470,7 @@ Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy
 For devices:
 
 ```powershell
-# Get list of current sensitive devices (first 100, adjust filter if you want more)
+# Get list of devices tagged as honeytokens
 (Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/odata/TaggedSecurityPrincipals?`$filter=Type%20eq%20%27Computer%27%20and%20TagTypes%20has%20%27Honeytoken%27&`$count=true&`$top=100&`$skip=0" -ContentType "application/json" -WebSession $session -Headers $headers).value
 
 # Get list of devices (first 100, adjust filter if you want more)
@@ -485,7 +485,7 @@ $body = @{
 } | ConvertTo-Json
 
 $computers = New-Object System.Collections.ArrayList
-(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27Honeytoken%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value | Where-Object { $_.Id -match '.{8}-.{4}-.{4}-.{4}-.{12}' } | Out-GridView -PassThru | ForEach-Object { $computers.Add($_.Id) | Out-Null }
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27Honeytoken%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value | Out-GridView -PassThru | ForEach-Object { $computers.Add($_.Id) | Out-Null }
 
 # Tag devices as honeytokens
 $body = @{
@@ -496,7 +496,7 @@ $body = @{
 
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/tagging" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
 
-# Untag users as honeytokens
+# Untag devices as honeytokens
 $body = @{
     EntitiesType = "Computer"
     TagType = @("Honeytoken")
@@ -527,7 +527,7 @@ $body = @{
 } | ConvertTo-Json
 
 $computers = New-Object System.Collections.ArrayList
-(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27ExchangeServer%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value | Where-Object { $_.Id -match '.{8}-.{4}-.{4}-.{4}-.{12}' } | Out-GridView -PassThru | ForEach-Object { $computers.Add($_.Id) | Out-Null }
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27ExchangeServer%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value | Out-GridView -PassThru | ForEach-Object { $computers.Add($_.Id) | Out-Null }
 
 # Tag devices as an Exchange server
 $body = @{
@@ -553,17 +553,168 @@ Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy
 
 ### Global excluded entities
 
-Global excluded entities
+This section is to exclude users, domains, devices, and IP addresses from *all* detection rules. It is a best practice to use per-rule exclusions and/or Alert tuning instead of globally excluding entities.
+
+For users:
 
 ```powershell
+# Get list of current excluded users
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/odata/ExclusionEntityDatas/Global?`$filter=ExclusionType%20eq%20%27User%27&`$count=true&`$top=100&`$skip=0" -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Search users by name (first 100, adjust filter if you want more)
+$body = @{
+  SearchType = "User"
+  Filter = "Albert"
+} | ConvertTo-Json
+
+$users = New-Object System.Collections.ArrayList
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$filter=TagTypes%20ne%20%27Honeytoken%27&`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value | Out-GridView -PassThru | ForEach-Object { $users.Add($_.Id) | Out-Null }
+
+# Add users
+$body = @{
+    ExclusionType = @("User")
+    ExcludedEntityIdentifiers = $users
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/exclusion/Global" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Remove users
+$body = @{
+    ExclusionType = @("User")
+    ExcludedEntityIdentifiers = $users
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/exclusion/Global" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+```
+
+For domains:
+
+```powershell
+# Get list of current excluded domains
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/odata/ExclusionEntityDatas/Global?`$filter=ExclusionType%20eq%20%27DomainName%27&`$count=true&`$top=100&`$skip=0" -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Add a domain
+$body = @{
+    ExclusionType = @("DomainName")
+    ExcludedEntityIdentifiers = @("infection.monkey.sharemylabs.com","myc2.sharemylabs.com")
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/exclusion/Global" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Remove a domain
+$body = @{
+    ExclusionType = @("DomainName")
+    ExcludedEntityIdentifiers = @("infection.monkey.sharemylabs.com","myc2.sharemylabs.com")
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/exclusion/Global" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+```
+
+For devices:
+
+```powershell
+# Get list of excluded devices
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/odata/ExclusionEntityDatas/Global?`$filter=ExclusionType%20eq%20%27Computer%27&`$count=true&`$top=100&`$skip=0" -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Get list of devices (first 100, adjust filter if you want more)
+$body = @{ SearchType = "Computer" } | ConvertTo-Json
+
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Search devices by name (first 100, adjust filter if you want more)
+$body = @{
+  SearchType = "Computer"
+  Filter = "sml"
+} | ConvertTo-Json
+
+$computers = New-Object System.Collections.ArrayList
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value | Out-GridView -PassThru | ForEach-Object { $computers.Add($_.Id) | Out-Null }
+
+# Add devices to global exclusion
+$body = @{
+    ExclusionType = @("Computer")
+    ExcludedEntityIdentifiers = $computers
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/exclusion/Global" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Remove devices from global exclusion
+$body = @{
+    ExclusionType = @("Computer")
+    ExcludedEntityIdentifiers = $computers
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/exclusion/Global" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+```
+
+For IP Addresses:
+
+```powershell
+# Get list of current excluded IP addresses
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/odata/ExclusionEntityDatas/Global?`$filter=ExclusionType%20eq%20%27Subnet%27&`$count=true&`$top=100&`$skip=0" -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Add IP addresses
+$body = @{
+    ExclusionType = @("Subnet")
+    ExcludedEntityIdentifiers = @("10.10.10.10","1.1.1.1")
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/exclusion/Global" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Remove IP addresses
+$body = @{
+    ExclusionType = @("Subnet")
+    ExcludedEntityIdentifiers = @("10.10.10.10","1.1.1.1")
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/exclusion/Global" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
 
 ```
 
 ### Exclusions by detection rule
 
-Exclusions by detection rule
+Occasionally we need to exclude users, devices, or IPs from creating alerts for specific detection rules. The most common example will be Suspected DCSync attack (replication of directory services) which is triggered by the Entra Connect Sync server, so I will walk through discovering the detection rules metadata and create an exclusion for the Entra Connect Sync server for this rule.
+
+This is how we can enumarate details about the detection rules, such as their internal names (SecurityAlertTypeName is like the Id which is used as an endpoint in the API), what types of exclusions they support (user, computer, or subnet), count of exclusions for each type, and localized names (the pretty display name we see in the GUI).
 
 ```powershell
+# List all detection rules
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SecurityAlertExclusionDatas/?`$count=true&`$top=100&`$skip=0" -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Search for detection rules by name (can see how we do OData filters!)
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SecurityAlertExclusionDatas/?`$filter=contains(tolower(TranslationData/Fallback),%27dcsync%27)&`$count=true&`$top=20&`$skip=0" -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Get details about the DirectoryServicesReplicationSecurityAlert detection rule
+$SecurityAlertTypeName = "DirectoryServicesReplicationSecurityAlert"
+(Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/odata/ExclusionEntityDatas/$SecurityAlertTypeName`?`$count=true&`$top=3&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value
+
+# Search devices by name (first 100, adjust filter if you want more)
+$body = @{
+  SearchType = "Computer"
+  Filter = "AADCONNECT"
+} | ConvertTo-Json
+
+$computers = New-Object System.Collections.ArrayList
+(Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/odata/SearchSecurityPrincipals?`$count=true&`$top=100&`$skip=0" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers).value | Out-GridView -PassThru | ForEach-Object { $computers.Add($_.Id) | Out-Null }
+
+# Add Entra Connect Servers as an exclusion
+$body = @{
+    ExclusionType = @("Computer")
+    ExcludedEntityIdentifiers = $computers
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/exclusion/$SecurityAlertTypeName" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Remove Entra Connect Servers as an exclusion
+$body = @{
+    ExclusionType = @("Computer")
+    ExcludedEntityIdentifiers = $computers
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/exclusion/$SecurityAlertTypeName" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
 
 ```
 
@@ -571,18 +722,42 @@ Exclusions by detection rule
 
 ### Health issue notifications
 
+I generally recommend adding a distribution list / mail enabled security group to receive helath issue notifications unless you plan to obtain alerts in a different way. Graph API now has these alerts which enables automation to send these via Teams chat / channel messages: https://learn.microsoft.com/en-us/graph/api/resources/healthmonitoring-overview?view=graph-rest-beta
+
 ```powershell
+# Get current email addresses
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/healthNotifications/" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Add an email address
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/healthNotifications/" -Body '{"Email":"test@sharemylabs.com"}' -ContentType "application/json" -WebSession $session -Headers $headers -AllowInsecureRedirect
+
+# Remove an email address
+Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/healthNotifications/" -Body '{"Email":"test@sharemylabs.com"}' -ContentType "application/json" -WebSession $session -Headers $headers
 
 ```
 
 ### Alert notifications
 
+It is recommended to use Defender XDR Alert notifications instead of alert notifications from Defender for Identity as it is more flexible and is the long term solution for incident/alert notifications. We can still configure these for now, so I'll document them here.
+
 ```powershell
+# Get current email addresses
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/alertNotifications/" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Add an email address
+Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/alertNotifications/" -Body '{"Email":"test@sharemylabs.com"}' -ContentType "application/json" -WebSession $session -Headers $headers -AllowInsecureRedirect
+
+# Remove an email address
+Invoke-RestMethod -Method "DELETE" -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/alertNotifications/" -Body '{"Email":"test@sharemylabs.com"}' -ContentType "application/json" -WebSession $session -Headers $headers
 
 ```
 
 ### Syslog notifications
 
+Only documenting how to check if syslog is still enabled and configured. All health and alert notifications should be retrived via API at this point rather than syslog.
+
 ```powershell
+# Get current syslog config
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/aatp/api/workspace/configuration/syslog" -ContentType "application/json" -WebSession $session -Headers $headers
 
 ```
