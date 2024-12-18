@@ -5,7 +5,7 @@ function Get-DefenderAuth {
 
   # Copy xsrf token from the browser
   $xsrf = Read-Host -Prompt "Enter xsrf cookie value" -AsSecureString
-  if ($xsrf.Length -ne 347) { Write-Output "sccauth was $($xsrf.Length) characters and may be incorrect" }
+  if ($xsrf.Length -ne 347) { Write-Output "xsrf was $($xsrf.Length) characters and may be incorrect" }
 
   # Create session and cookies
   $global:session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
