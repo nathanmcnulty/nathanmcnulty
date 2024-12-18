@@ -48,15 +48,17 @@ Now we can create a session with those cookies:
 
 ```powershell
 # Copy sccauth from the browser
-$sccauth = Get-Clipboard
+$sccauth = Read-Host -Prompt "Enter sccauth cookie value" -AsSecureString
+if ($sccauth.Length -ne 2368) { Write-Warning "sccauth was $(sccauth.Length) characters and may be incorrect" }
 
 # Copy xsrf token from the browser
-$xsrf = Get-Clipboard
+$xsrf = Read-Host -Prompt "Enter xsrf cookie value" -AsSecureString
+if ($xsrf.Length -ne 347) { Write-Warning "xsrf was $($xsrf.Length) characters and may be incorrect" }
 
 # Create session and cookies
 $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-$session.Cookies.Add((New-Object System.Net.Cookie("sccauth", "$sccauth", "/", "security.microsoft.com")))
-$session.Cookies.Add((New-Object System.Net.Cookie("XSRF-TOKEN", "$xsrf", "/", "security.microsoft.com")))
+$session.Cookies.Add((New-Object System.Net.Cookie("sccauth", "$($sccauth | ConvertFrom-SecureString -AsPlainText)", "/", "security.microsoft.com")))
+$session.Cookies.Add((New-Object System.Net.Cookie("XSRF-TOKEN", "$($xsrf | ConvertFrom-SecureString -AsPlainText)", "/", "security.microsoft.com")))
 
 # Set the headers to include the xsrf token
 [Hashtable]$Headers=@{}
