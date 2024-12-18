@@ -73,6 +73,10 @@ With this complete, we can now make requests to the internal API :)
 The body below will enable most options in Advanced features except "Restrict correlation to within scoped device groups​" which is not applicable to most organizations. Some settings, such as Live Response and Deception require additional API calls.
 
 ```powershell
+# Get values
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/settings/GetAdvancedFeaturesSetting" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Update values
 $body = @{
     AatpIntegrationEnabled = $false
     AatpWorkspaceExists = $false
@@ -96,7 +100,7 @@ $body = @{
     HidePotentialDuplications = $true
     IsolateIncidentsWithDifferentDeviceGroups = $false
     LicenseEnabled = $true
-    M365SecureScoreIntegrationEnabled = $false
+    M365SecureScoreIntegrationEnabled = $true
     MagellanOptOut = $false
     MobileDeactivationPeriodInDays = $null
     ShowUserAadProfile = $true
@@ -112,42 +116,49 @@ Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/m
 
 | Feature Name | Recommended Value | Description |
 | ------ | ------ | ------ |
-| AatpIntegrationEnabled | False  | ??? Not in portal - Likely removed as these are always integrated in XDR now ??? |
-| AatpWorkspaceExists | False  | ??? Not in portal - Likely removed as these are always integrated in XDR now ??? |
-| AllowWdavNetworkBlock | True  | Custom network indicators |
-| AutoResolveInvestigatedAlerts | True  | Automatically resolve alerts |
-| BilbaoApproved | False  | Endpoint Attack Notifications |
-| BilbaoEnabled | False  | Endpoint Attack Notifications |
+| AatpIntegrationEnabled | False (Default) | ??? Not in portal - Likely removed as these are always integrated in XDR now ??? |
+| AatpWorkspaceExists | False (Default) | ??? Not in portal - Likely removed as these are always integrated in XDR now ??? |
+| AllowWdavNetworkBlock | True | Custom network indicators |
+| AutoResolveInvestigatedAlerts | True | Automatically resolve alerts |
+| BilbaoApproved | False | Endpoint Attack Notifications |
+| BilbaoEnabled | False | Endpoint Attack Notifications |
 | BlockListEnabled | True | Allow or block file | 
-| DartDataCollection | False  | Microsoft Defender Experts integration |
-| EnableAggregatedReporting | False  | ??? Not in portal - Not sure... ??? |
-| EnableAipIntegration | False  | Not in portal - Likely replaced by newer Compliance Center sharing |
-| EnableAuditTrail | True  | Unified audit log |
+| DartDataCollection | False | Microsoft Defender Experts integration |
+| EnableAggregatedReporting | False | ??? Not in portal - Not sure... ??? |
+| EnableAipIntegration | False | Not in portal - Likely replaced by newer Compliance Center sharing |
+| EnableAuditTrail | True | Unified audit log |
 | EnableCustomAsrAdvancedProcessTermination | False  | ??? Not in portal - Custom ASR rules with the ability to terminate processes ??? |
-| EnableEndpointDlp | True  | Not in portal - True when we have provisioned Endpoint DLP in Purview |
-| EnableExcludedDevices | False  | ??? Not in portal - Maybe from before we could exclude devices from TVM repoting ??? |
-| EnableMcasIntegration | True  | Microsoft Defender for Cloud Apps |
-| EnableQuarantinedFileDownload | True  | Download quarantined files |
-| EnableWdavAntiTampering | True  | Tamper protection |
+| EnableEndpointDlp | True | Not in portal - True when we have provisioned Endpoint DLP in Purview |
+| EnableExcludedDevices | False | ??? Not in portal - Maybe from before we could exclude devices from TVM repoting ??? |
+| EnableMcasIntegration | True | Microsoft Defender for Cloud Apps |
+| EnableQuarantinedFileDownload | True | Download quarantined files |
+| EnableWdavAntiTampering | True | Tamper protection |
 | EnableWdavAuditMode | False | ??? Not in portal - Might be to force passive mode across all devices ??? |
 | EnableWdavPassiveModeRemediation | True | Enable EDR in block mode |
 | HidePotentialDuplications | True | Hide potential duplicate device records |
 | IsolateIncidentsWithDifferentDeviceGroups | False  | Restrict correlation to within scoped device groups​ |
 | LicenseEnabled | True | ??? Not in portal - Need to check M365 Business Premium and E3 tenant, likely true if licensed but maybe means license level ??? |
 | M365SecureScoreIntegrationEnabled | False  | ??? Not in portal - Likely removed as these are always integrated in XDR now ??? |
-| MagellanOptOut | False  | Device discovery |
+| MagellanOptOut | False | Device discovery |
 | MobileDeactivationPeriodInDays | Null  | ??? Not in portal - Might be adjustable timeout for mobile devices before marking them as not active ???|
-| ShowUserAadProfile | True  | Show user details |
-| SkypeIntegrationEnabled | True  | Skype for business integration |
-| UseSimplifiedConnectivity | True  | Default to streamlined connectivity when onboarding devices in Defender portal​​ |
-| UseSimplifiedConnectivityViaApi | True  | Apply streamlined connectivity settings to devices managed by Intune and Defender for Cloud |
-| WebCategoriesEnabled | True  | Web content filtering |
+| OfficeIntegrationEnabled | False (Default) | ??? Discovered 2024/12/12 ??? |
+| OfficeLicenseEnabled | False (Default) | ??? Discovered 2024/12/12 ??? |
+| O365ToAtpIntegrationEnabled | False (Default) | ??? Discovered 2024/12/12 ??? |
+| ShowUserAadProfile | True | Show user details |
+| SkypeIntegrationEnabled | True | Skype for business integration |
+| UseSimplifiedConnectivity | True | Default to streamlined connectivity when onboarding devices in Defender portal​​ |
+| UseSimplifiedConnectivityViaApi | True | Apply streamlined connectivity settings to devices managed by Intune and Defender for Cloud |
+| WebCategoriesEnabled | True | Web content filtering |
 
 These are a good starting point, and you can adjust as needed for your environment. If you have a dev tenant, you can definitely play with some of these settings and see what breaks ;)
 
 The following will enable Live Response for clients and servers, and it will also allow unsigned scripts to be run. It is recommended to move to signed scripts, but remember that uploading scripts to the library still requires administrative rights to begin with.
 
 ```powershell
+# Get values
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/liveResponseApi/get_properties?useV2Api=true&useV3Api=true" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Update values
 $body = @{
     properties = @{
         AutomatedIrLiveResponse = $true
@@ -155,6 +166,7 @@ $body = @{
         LiveResponseForServers = $true
     }
 } | ConvertTo-Json
+
 Invoke-RestMethod -Method "PATCH" -Uri "https://security.microsoft.com/apiproxy/mtp/liveResponseApi/update_properties?useV2Api=true&useV3Api=true" -Body $body -ContentType "application/json" -WebSession $session -Headers $headers
 
 ```
@@ -162,6 +174,10 @@ Invoke-RestMethod -Method "PATCH" -Uri "https://security.microsoft.com/apiproxy/
 To enable Deception:
 
 ```powershell
+# Get values
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/deception/portal/deceptionsettings" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Update values
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/deception/portal/deceptionsettings/update" -Body "{`"isDeceptionEnabled` =true}" -ContentType "application/json" -WebSession $session -Headers $headers
 
 ```
@@ -169,6 +185,10 @@ Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/m
 To enable Share endpoint alerts with Microsoft Compliance Center:
 
 ```powershell
+# Get values
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/wdatpInternalApi/compliance/alertSharing/status/" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Update values
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/wdatpInternalApi/compliance/alertSharing/status/" -Body "true" -ContentType "application/json" -WebSession $session -Headers $headers
 
 ```
@@ -176,6 +196,10 @@ Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/m
 To enable Microsoft Intune connection:
 
 ```powershell
+# Get values (0 is disabled, 1 is enabled)
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/responseApiPortal/onboarding/intune/status" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Update values
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/responseApiPortal/onboarding/intune/provision" -Body "{`"timeout` =60000}" -ContentType "application/json" -WebSession $session -Headers $headers
 
 ```
@@ -183,6 +207,10 @@ Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/m
 To enable Authenticated telemetry:
 
 ```powershell
+# Get values
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/responseApiPortal/senseauth/allownonauthsense" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Update values
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/responseApiPortal/senseauth/allownonauthsense" -Body "{`"allowNonAuthenticatedSense` =true}" -ContentType "application/json" -WebSession $session -Headers $headers
 
 ```
@@ -190,6 +218,10 @@ Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/m
 To enable Preview features:
 
 ```powershell
+# Get values
+Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/settings/GetPreviewExperienceSetting?context=MdatpContext" -ContentType "application/json" -WebSession $session -Headers $headers
+
+# Update values
 Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/mtp/settings/SavePreviewExperienceSetting?context=MdatpContext" -Body "{`"IsOptIn` =true}" -ContentType "application/json" -WebSession $session -Headers $headers
 
 ```
@@ -201,7 +233,7 @@ This section is mostly for usage check, but for environments with M365 Business 
 This will kick back the license usage details:
 
 ```powershell
-# Get license cound
+# Get license count
 (Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/licenses/mgmt/aadlicenses/sums" -ContentType "application/json" -WebSession $session -Headers $headers).sums
 
 # Get usage
@@ -327,18 +359,18 @@ $PrivServers = @{
     @{ OperatorType = 0; Property = 0; PropertyValue = "" }
     @{ OperatorType = 0; Property = 1; PropertyValue = "" }
     @{ OperatorType = 2; Property = 2; PropertyValue = "Privileged" }
-    @{ OperatorType = 4; Property = 3; PropertyValue = "[`"WindowsServer2022`",`"WindowsServer2019`",`"WindowsServer2016`",`"WindowsServer2012R2`",`"WindowsServer2008R2`",`"Windows8blueserver`",`"Windows8server`",`"Windows2008`",`"Windows2016`",`"Windows2003`"]" }
+    @{ OperatorType = 4; Property = 3; PropertyValue = "[`"WindowsServer2022`",`"WindowsServer2019`",`"WindowsServer2016`",`"WindowsServer2012R2`",`"Windows2016`",`"Linux`"]" }
     @{ OperatorType = 0; Property = 4; PropertyValue = "" }
   )
   MachineGroupAssignments = @()
   OldMachineGroupId = $null
 } | ConvertTo-Json -Depth 4
 
-# Non-Privileged Servers
-$NonPrivServers = @{
+# Servers
+$Servers = @{
   MachineGroupId = -1
-  Name = "Non-Privileged Servers"
-  Description = "Non-Privileged Servers"
+  Name = "Servers"
+  Description = "Servers"
   AutoRemediationLevel = 3
   Priority = 123456789
   IsUnassignedMachineGroup = $false
@@ -348,7 +380,7 @@ $NonPrivServers = @{
     @{ OperatorType = 0; Property = 0; PropertyValue = "" }
     @{ OperatorType = 0; Property = 1; PropertyValue = "" }
     @{ OperatorType = 0; Property = 2; PropertyValue = "" }
-    @{ OperatorType = 4; Property = 3; PropertyValue = "[`"WindowsServer2022`",`"WindowsServer2019`",`"WindowsServer2016`",`"WindowsServer2012R2`",`"WindowsServer2008R2`",`"Windows8blueserver`",`"Windows8server`",`"Windows2008`",`"Windows2016`",`"Windows2003`"]" }
+    @{ OperatorType = 4; Property = 3; PropertyValue = "[`"WindowsServer2022`",`"WindowsServer2019`",`"WindowsServer2016`",`"WindowsServer2012R2`",`"Windows2016`",`"Linux`"]" }
     @{ OperatorType = 0; Property = 4; PropertyValue = "" }
   )
   MachineGroupAssignments = @()
@@ -376,11 +408,11 @@ $PrivEndpoints = @{
   OldMachineGroupId = $null
 } | ConvertTo-Json -Depth 4
 
-# Non-Privileged Endpoints
-$NonPrivEndpoints = @{
+# Endpoints
+$Endpoints = @{
   MachineGroupId = -1
-  Name = "Non-Privileged Endpoints"
-  Description = "Non-Privileged Endpoints"
+  Name = "Endpoints"
+  Description = "Endpoints"
   AutoRemediationLevel = 3
   Priority = 123456789
   IsUnassignedMachineGroup = $false
@@ -398,7 +430,7 @@ $NonPrivEndpoints = @{
 } | ConvertTo-Json -Depth 4
 
 # This iterates through the list of variables storign the device group details - add/remove as needed
-$PrivServers,$NonPrivServers,$PrivEndpoints,$NonPrivEndpoints | ForEach-Object {
+$PrivServers,$Servers,$PrivEndpoints,$Endpoints | ForEach-Object {
     # Get existing devices groups
     $existingGroups = (Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/rbacManagementApi/rbac/machine_groups?addAadGroupNames=true&addMachineGroupCount=false" -ContentType "application/json" -WebSession $session -Headers $headers).items
 
@@ -423,8 +455,10 @@ $PrivServers,$NonPrivServers,$PrivEndpoints,$NonPrivEndpoints | ForEach-Object {
 After enabling the deception feature, we can enable the default deception rule as well as create our own rules / lures. I always recommend enabling at least the default rule, and so I'll show how to detect if it is enabled and how to enable it if it isn't.
 
 ```powershell
+# Get values
 $response = Invoke-RestMethod -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/deception/portal/deceptionrules" -ContentType "application/json" -WebSession $session -Headers $headers
 
+# Update values
 if ($response.isEnabled -eq $false) {
   Invoke-RestMethod -Method "PUT" -Uri "https://security.microsoft.com/apiproxy/mtp/k8s/deception/portal/deceptionrules/ffffffff-ffff-ffff-ffff-ffffffffffff/updatestate?isEnabled=true" -ContentType "application/json" -WebSession $session -Headers $headers
 }
@@ -619,7 +653,7 @@ Invoke-WebRequest -Uri "https://definitionupdates.microsoft.com/download/Definit
 
 ```
 
-I haven't captured how to get the latest macOS link, but this is the most current as of 2024/11/26:
+I haven't captured how to get the latest macOS link, but this is the most current as of 2024/12/17:
 
 ```powershell
 # Get MDE for macOS installation package
@@ -627,11 +661,11 @@ Invoke-WebRequest -Uri "https://officecdn-microsoft-com.akamaized.net/pr/C1297A4
 
 ```
 
-I haven't captured how to get the latest macOS link, but this is the most current as of 2024/11/26:
+This should always redirect to the latest version of the plugin:
 
 ```powershell
 # Get WSL2 plug-in installation package
-Invoke-WebRequest -Uri "https://definitionupdates.microsoft.com/download/DefinitionUpdates/wsl/1.24.1106.2/x64/defenderplugin-x64-1.24.1106.2.msi" -OutFile "$env:USERPROFILE\Downloads\defenderplugin-x64-1.24.1106.2.msi"
+Invoke-WebRequest -Uri "https://aka.ms/defenderPlugin" -OutFile "$env:USERPROFILE\Downloads\defenderplugin-x64.msi"
 
 ```
 
@@ -647,6 +681,7 @@ This table contains the management tool (mgmtTool) value you'll use depending on
 | Windows | Intune/MDM | 2 | [Onboard Windows devices to Defender for Endpoint using Intune](https://learn.microsoft.com/en-us/defender-endpoint/configure-endpoints-mdm) |
 | Windows | Configuration Manager | 2 | [Onboard Windows devices using Configuration Manager](https://learn.microsoft.com/en-us/defender-endpoint/configure-endpoints-sccm) |
 | Windows | Script | 4 | [Onboard Windows devices using a local script](https://learn.microsoft.com/en-us/defender-endpoint/configure-endpoints-script) |
+| Windows | VDI | 5 | [Onboard non-persistent virtual desktop infrastructure](https://learn.microsoft.com/en-us/defender-endpoint/configure-endpoints-vdi) |
 | macOS | MDM / Intune | 6 | [Microsoft Defender for Endpoint on Mac](https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-endpoint-mac) |
 | macOS | Script | 7 | [Microsoft Defender for Endpoint on Mac](https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-endpoint-mac) |
 | Linux | Configuration Management Tools | 8 | [Microsoft Defender for Endpoint on Linux](https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-endpoint-linux) |
