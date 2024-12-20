@@ -1,10 +1,10 @@
 {
     "@odata.context": "https://graph.microsoft.com/beta/$metadata#deviceManagement/configurationPolicies/$entity",
-    "createdDateTime": "2024-10-02T23:35:09.6824224Z",
+    "createdDateTime": "2024-12-20T01:29:09.3428823Z",
     "creationSource": null,
     "description": "",
-    "lastModifiedDateTime": "2024-10-02T23:47:02.199323Z",
-    "name": "Defender AV - Client - Baseline - 241002",
+    "lastModifiedDateTime": "2024-12-20T01:29:09.3428823Z",
+    "name": "Defender AV - Client - Baseline - 241220",
     "platforms": "windows10",
     "priorityMetaData": null,
     "roleScopeTagIds": [
@@ -12,7 +12,7 @@
     ],
     "settingCount": 40,
     "technologies": "mdm",
-    "id": "2bb68367-6b0a-4828-897e-a538a462f3e7",
+    "id": "d2bb8b55-312c-4699-9348-2b97617548b0",
     "templateReference": {
         "templateId": "",
         "templateFamily": "none",
