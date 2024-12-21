@@ -18,3 +18,7 @@ Compress-Archive -Path "$env:TEMP\Defender\" -DestinationPath "$env:TEMP\$filena
 # Upload file to Azure blob storage
 $headers = @{ "x-ms-blob-type" = "BlockBlob"; "x-ms-date" = "$(Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")"}
 Invoke-RestMethod -Method "PUT" -Headers $headers -Uri "$storageAccountRoot/$filename.zip?$sasToken" -InFile "$env:TEMP\$filename.zip"
+
+# Cleanup files
+Remove-Item "$env:TEMP\$filename.zip" -Force
+Remove-Item "$env:TEMP\Defender" -Recurse -Force
