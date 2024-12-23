@@ -19,14 +19,15 @@ $DeviceName = $env:COMPUTERNAME
 
 $body = New-Object System.Collections.ArrayList
 Get-Content (Get-Item -Path "$env:ProgramData\Microsoft\Windows Defender\Support\MPLog*") | Select-String -Pattern "Impact: \b([5-9][0-9])%" | Select-String "TotalTime: \d{3,5}," | ForEach-Object {
+    [array]$substring = $_.ToString().Substring(23).Split(',')
     [string]$Timestamp = "$(Get-Date -Date $_.ToString().Substring(0,23) -Format O)Z"
-    [string]$ProcessImageName = $_.ToString().Substring(23).Split(',')[0].Split(' ')[-1]
-    [int]$ProcessId = $_.ToString().Substring(23).Split(',')[1].Split(' ')[-1]
-    [int]$TotalTime = $_.ToString().Substring(23).Split(',')[2].Split(' ')[-1]
-    [int]$Count = $_.ToString().Substring(23).Split(',')[3].Split(' ')[-1]
-    [int]$MaxTime = $_.ToString().Substring(23).Split(',')[4].Split(' ')[-1]
-    [string]$MaxTimeFile = $_.ToString().Substring(23).Split(',')[5].Split(':')[-1].Trim(' ')
-    [int]$EstimatedImpact = $_.ToString().Substring(23).Split(',')[6].Split(' ')[-1].Trim('%')
+    [string]$ProcessImageName = $substring[0].Split(' ')[-1]
+    [int]$ProcessId = $substring[1].Split(' ')[-1]
+    [int]$TotalTime = $substring[2].Split(' ')[-1]
+    [int]$Count = $substring[3].Split(' ')[-1]
+    [int]$MaxTime = $substring[4].Split(' ')[-1]
+    [string]$MaxTimeFile = $substring[5].Split(':')[-1].Trim(' ')
+    [int]$EstimatedImpact = $substring[6].Split(' ')[-1].Trim('%')
 
     $json = @{
         DeviceId = $DeviceId
