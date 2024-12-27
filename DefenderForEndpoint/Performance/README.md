@@ -1,6 +1,6 @@
 # Defender AV Performance Monitoring and Tuning
 
-![img](.\img\law.png)
+![img](./img/law.png)
 
 This will eventually contain some more guidance, but for now, I'm focusing on telemetry collection ;)
 
