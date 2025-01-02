@@ -178,12 +178,12 @@ if ($changes) {
   Write-Output "Changing values:`n`n$($changes | ForEach-Object { Write-Output "$_" })"
 
   # Set desired settings with one retry
-  Invoke-DefenderApi -Method "POST" -Uri "/mtp/liveResponseApi/update_properties?useV2Api=true&useV3Api=true" -Body ($settings | ConvertTo-Json)
+  Invoke-DefenderApi -Method "PATCH" -Uri "/mtp/liveResponseApi/update_properties?useV2Api=true&useV3Api=true" -Body ($settings | ConvertTo-Json)
   $new = Invoke-DefenderApi -Uri "/mtp/liveResponseApi/get_properties?useV2Api=true&useV3Api=true"
   $compare = Compare-Object -ReferenceObject ($settings | ConvertTo-Json -Compress) -DifferenceObject ($new | ConvertTo-Json -Compress)
   if ($compare) { 
     Write-Output "Retrying..."
-    Invoke-DefenderApi -Method "POST" -Uri "/mtp/liveResponseApi/update_properties?useV2Api=true&useV3Api=true" -Body ($settings | ConvertTo-Json)
+    Invoke-DefenderApi -Method "PATCH" -Uri "/mtp/liveResponseApi/update_properties?useV2Api=true&useV3Api=true" -Body ($settings | ConvertTo-Json)
     $new = Invoke-DefenderApi -Uri "/mtp/liveResponseApi/get_properties?useV2Api=true&useV3Api=true"
   }
   Write-Log -Settings ($new | ConvertTo-Json) -Subject $subject -Type "New"
