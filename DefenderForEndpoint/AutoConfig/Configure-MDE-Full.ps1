@@ -1,7 +1,7 @@
 function Get-DefenderAuth {  
   # Copy sccauth from the browser
   $sccauth = Read-Host -Prompt "Enter sccauth cookie value" -AsSecureString
-  if ($sccauth.Length -ne 2368) { Write-Output "sccauth was $(sccauth.Length) characters and may be incorrect" }
+  #if ($sccauth.Length -ne 2368) { Write-Output "sccauth was $($sccauth.Length) characters and may be incorrect" }
 
   # Copy xsrf token from the browser
   $xsrf = Read-Host -Prompt "Enter xsrf cookie value" -AsSecureString
