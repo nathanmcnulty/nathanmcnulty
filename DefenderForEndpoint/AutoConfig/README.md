@@ -105,6 +105,9 @@ $body = @{
     M365SecureScoreIntegrationEnabled = $true
     MagellanOptOut = $false
     MobileDeactivationPeriodInDays = $null
+    O365ToAtpIntegrationEnabled = $false
+    OfficeIntegrationEnabled = $false
+    OfficeLicenseEnabled = $false
     ShowUserAadProfile = $true
     SkypeIntegrationEnabled = $true
     UseSimplifiedConnectivity = $true
@@ -118,39 +121,39 @@ Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/m
 
 | Feature Name | Recommended Value | Description |
 | ------ | ------ | ------ |
-| AatpIntegrationEnabled | False (Default) | ??? Not in portal - Likely removed as these are always integrated in XDR now ??? |
-| AatpWorkspaceExists | False (Default) | ??? Not in portal - Likely removed as these are always integrated in XDR now ??? |
-| AllowWdavNetworkBlock | True | Custom network indicators |
-| AutoResolveInvestigatedAlerts | True | Automatically resolve alerts |
-| BilbaoApproved | False | Endpoint Attack Notifications |
-| BilbaoEnabled | False | Endpoint Attack Notifications |
-| BlockListEnabled | True | Allow or block file | 
-| DartDataCollection | False | Microsoft Defender Experts integration |
-| EnableAggregatedReporting | False | ??? Not in portal - Not sure... ??? |
-| EnableAipIntegration | False | Not in portal - Likely replaced by newer Compliance Center sharing |
-| EnableAuditTrail | True | Unified audit log |
-| EnableCustomAsrAdvancedProcessTermination | False  | ??? Not in portal - Custom ASR rules with the ability to terminate processes ??? |
-| EnableEndpointDlp | True | Not in portal - True when we have provisioned Endpoint DLP in Purview |
-| EnableExcludedDevices | False | ??? Not in portal - Maybe from before we could exclude devices from TVM repoting ??? |
-| EnableMcasIntegration | True | Microsoft Defender for Cloud Apps |
-| EnableQuarantinedFileDownload | True | Download quarantined files |
-| EnableWdavAntiTampering | True | Tamper protection |
-| EnableWdavAuditMode | False | ??? Not in portal - Might be to force passive mode across all devices ??? |
-| EnableWdavPassiveModeRemediation | True | Enable EDR in block mode |
-| HidePotentialDuplications | True | Hide potential duplicate device records |
-| IsolateIncidentsWithDifferentDeviceGroups | False  | Restrict correlation to within scoped device groups​ |
-| LicenseEnabled | True | ??? Not in portal - Need to check M365 Business Premium and E3 tenant, likely true if licensed but maybe means license level ??? |
-| M365SecureScoreIntegrationEnabled | False  | ??? Not in portal - Likely removed as these are always integrated in XDR now ??? |
-| MagellanOptOut | False | Device discovery |
-| MobileDeactivationPeriodInDays | Null  | ??? Not in portal - Might be adjustable timeout for mobile devices before marking them as not active ???|
-| OfficeIntegrationEnabled | False (Default) | ??? Discovered 2024/12/12 ??? |
-| OfficeLicenseEnabled | False (Default) | ??? Discovered 2024/12/12 ??? |
-| O365ToAtpIntegrationEnabled | False (Default) | ??? Discovered 2024/12/12 ??? |
-| ShowUserAadProfile | True | Show user details |
-| SkypeIntegrationEnabled | True | Skype for business integration |
-| UseSimplifiedConnectivity | True | Default to streamlined connectivity when onboarding devices in Defender portal​​ |
+| AatpIntegrationEnabled | N/A | ??? Not in portal - Likely removed as these are always integrated in XDR now ??? |
+| AatpWorkspaceExists | N/A | ??? Not in portal - Likely removed as these are always integrated in XDR now ??? |
+| AllowWdavNetworkBlock | True | [Custom network indicators](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#custom-network-indicators) |
+| AutoResolveInvestigatedAlerts | True | [Automatically resolve alerts](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#automatically-resolve-alerts) |
+| BilbaoApproved | N/A | [Endpoint Attack Notifications](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#endpoint-attack-notifications) |
+| BilbaoEnabled | N/A | [Endpoint Attack Notifications](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#endpoint-attack-notifications) |
+| BlockListEnabled | True | [Allow or block file](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#allow-or-block-file) | 
+| DartDataCollection | N/A | Microsoft Defender Experts integration |
+| EnableAggregatedReporting | True | [New Feature (01.21.2025)](https://learn.microsoft.com/en-us/defender-endpoint/aggregated-reporting) |
+| EnableAipIntegration | N/A | Not in portal - Likely replaced by newer Compliance Center sharing |
+| EnableAuditTrail | True | [Unified audit log](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#unified-audit-log) |
+| EnableCustomAsrAdvancedProcessTermination | N/A | ??? Not in portal - Custom ASR rules with the ability to terminate processes ??? |
+| EnableEndpointDlp | N/A | Not in portal - True when we have provisioned Endpoint DLP in Purview |
+| EnableExcludedDevices | N/A | ??? Not in portal - Maybe from before we could exclude devices from TVM repoting ??? |
+| EnableMcasIntegration | True | [Microsoft Defender for Cloud Apps](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#microsoft-defender-for-cloud-apps) |
+| EnableQuarantinedFileDownload | True | [Download quarantined files](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#download-quarantined-files) |
+| EnableWdavAntiTampering | True | [Tamper protection](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#tamper-protection) |
+| EnableWdavAuditMode | N/A | ??? Not in portal - Might be to force passive mode across all devices ??? |
+| EnableWdavPassiveModeRemediation | True | [Enable EDR in block mode](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#enable-edr-in-block-mode) |
+| HidePotentialDuplications | True | [Hide potential duplicate device records](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#hide-potential-duplicate-device-records) |
+| IsolateIncidentsWithDifferentDeviceGroups | False  | [Restrict correlation to within scoped device groups​](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#restrict-correlation-to-within-scoped-device-groups) |
+| LicenseEnabled | N/A | ??? Not in portal - Need to check M365 Business Premium and E3 tenant, likely true if licensed but maybe means license level ??? |
+| M365SecureScoreIntegrationEnabled | True  | ??? Not in portal - Likely removed as these are always integrated in XDR now ??? |
+| MagellanOptOut | False | [Device discovery](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#device-discovery) |
+| MobileDeactivationPeriodInDays | N/A | ??? Not in portal - Might be adjustable timeout for mobile devices before marking them as not active ???|
+| OfficeIntegrationEnabled | N/A | ??? Discovered 2024/12/12 ??? |
+| OfficeLicenseEnabled | N/A | ??? Discovered 2024/12/12 ??? |
+| O365ToAtpIntegrationEnabled | N/A | ??? Discovered 2024/12/12 ??? |
+| ShowUserAadProfile | True | [Show user details](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#show-user-details) |
+| SkypeIntegrationEnabled | True | [Skype for Business integration](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#skype-for-business-integration) |
+| UseSimplifiedConnectivity | True | [Default to streamlined connectivity when onboarding devices in Defender portal​](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#default-to-streamlined-connectivity-when-onboarding-devices-in-the-defender-portal)​ |
 | UseSimplifiedConnectivityViaApi | True | Apply streamlined connectivity settings to devices managed by Intune and Defender for Cloud |
-| WebCategoriesEnabled | True | Web content filtering |
+| WebCategoriesEnabled | True | [Web content filtering](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#web-content-filtering) |
 
 These are a good starting point, and you can adjust as needed for your environment. If you have a dev tenant, you can definitely play with some of these settings and see what breaks ;)
 
