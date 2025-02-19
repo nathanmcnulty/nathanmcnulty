@@ -1,12 +1,12 @@
 # TO DO: Look at batching to improve performance
 
-#Connect with scopes necessary to create groups, update membership, and query the Reports API
+# Connect with scopes necessary to create groups, update membership, and query the Reports API
 Connect-MgGraph -Scopes Group.ReadWrite.All,AuditLog.Read.All
 
 # Get latest registration details
 $report = Get-MgBetaReportAuthenticationMethodUserRegistrationDetail -All
 
-# If you would prefer to only create groups for methods that exist, delete the methods section above and uncomment the following command:
+# If you would prefer to only create groups for methods that exist, delete the methods section below and uncomment the following command:
 # $methods = $report.methodsRegistered | Select-Object -Unique
 
 # Define methods to maintain groups for, delete or comment out ones you don't want
