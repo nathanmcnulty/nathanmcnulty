@@ -2,7 +2,7 @@
 $vmname = "VMName"
 
 # Set Context to subscription containing the VM
-Set-AzContext -Subscription <GUID>
+Set-AzContext -Subscription "<GUID>"
 
 # Get the VM Id
 $id = (Get-AzVm -Name $vmname).Id
@@ -11,7 +11,7 @@ $id = (Get-AzVm -Name $vmname).Id
 $uri = "https://management.azure.com$id/providers/Microsoft.Security/pricings/virtualMachines?api-version=2024-01-01"
 
 # Get Access Token to talk to the API
-$at = (Get-AzAccessToken).token
+$token = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR((Get-AzAccessToken -AsSecureString).Token))
 
 # Create body for API call, remove subplan line for Plan 2
 $body = @{
@@ -22,4 +22,4 @@ $body = @{
 } | ConvertTo-Json
 
 # Invoke API call to enable Defender for Servers
-Invoke-RestMethod -Method Put -Uri $uri -Headers @{Authorization = "Bearer $at"} -Body $body -ContentType "application/json"
+Invoke-RestMethod -Method Put -Uri $uri -Headers @{Authorization = "Bearer $token"} -Body $body -ContentType "application/json"

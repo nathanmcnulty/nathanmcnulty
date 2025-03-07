@@ -1,12 +1,9 @@
-# Tenant Id
-$tenantId = ''
-
 # Get Azure access token
-$token = Get-AzAccessToken -TenantId $tenantId -ResourceUrl "https://management.azure.com"
+$token = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR((Get-AzAccessToken -ResourceUrl "https://management.azure.com" -AsSecureString).Token))
 
 # Iterate through subscriptions and output Defender for Servers Plan
 $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-(Get-AzSubscription -TenantId $tenantId) | ForEach-Object {
+Get-AzSubscription | ForEach-Object {
     # Request Defender plans
     $wr = @{
         UseBasicParsing = $true
@@ -14,7 +11,7 @@ $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
         Method = "GET"
         WebSession = $session
         Headers = @{
-            "Authorization"="Bearer $($token.token)"
+            "Authorization"="Bearer $token"
         }
         ContentType = "application/json"
     }

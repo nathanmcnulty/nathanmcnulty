@@ -1,4 +1,4 @@
-#Requires ExchangeOnlineManagement
+#Requires -Modules ExchangeOnlineManagement
 
 # Connect to Exchange Online
 Connect-ExchangeOnline
