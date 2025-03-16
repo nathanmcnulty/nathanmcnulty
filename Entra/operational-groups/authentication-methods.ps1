@@ -73,7 +73,7 @@ $methods | ForEach-Object {
 
         # Loop through the list of users and add them to the group in batches of 20 (limit for the API)
         while ($values.Count -ne 0) {
-            Update-MgGroup -GroupId $groupId -BodyParameter @{ "members@odata.bind" = $values[0..19] }
+            Update-MgBetaGroup -GroupId $groupId -BodyParameter @{ "members@odata.bind" = $values[0..19] }
             if ($values.Count -gt 20) { $values.RemoveRange(0,20) } else { $values.RemoveRange(0,$values.Count) }
         }
     }
@@ -139,7 +139,7 @@ $IsSomethingFalse | ForEach-Object {
 
         # Loop through the list of users and add them to the group in batches of 20 (limit for the API)
         while ($values.Count -ne 0) {
-            Update-MgGroup -GroupId $groupId -BodyParameter @{ "members@odata.bind" = $values[0..19] }
+            Update-MgBetaGroup -GroupId $groupId -BodyParameter @{ "members@odata.bind" = $values[0..19] }
             if ($values.Count -gt 20) { $values.RemoveRange(0,20) } else { $values.RemoveRange(0,$values.Count) }
         }
     }
@@ -194,7 +194,7 @@ $IsSomethingTrue | ForEach-Object {
 
         # Loop through the list of users and add them to the group in batches of 20 (limit for the API)
         while ($values.Count -ne 0) {
-            Update-MgGroup -GroupId $groupId -BodyParameter @{ "members@odata.bind" = $values[0..19] }
+            Update-MgBetaGroup -GroupId $groupId -BodyParameter @{ "members@odata.bind" = $values[0..19] }
             if ($values.Count -gt 20) { $values.RemoveRange(0,20) } else { $values.RemoveRange(0,$values.Count) }
         }
     }
