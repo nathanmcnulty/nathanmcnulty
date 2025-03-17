@@ -18,49 +18,43 @@ Connect-MgGraph -Scopes "Application.ReadWrite.All"
 
 # Add key credentials to the application
 $app = Get-MgApplication -Filter "displayName eq 'Patch My PC - Intune Connector'"
-$params = @{
+$body = @{
 	keyCredentials = @(
 		@{
-			endDateTime = $cert.NotAfter
-			startDateTime = $cert.NotBefore
-            customKeyIdentifier = [System.Text.Encoding]::ASCII.GetBytes("$($cert.Thumbprint)")
+			keyId = "$(New-Guid)"
 			type = "AsymmetricX509Cert"
 			usage = "Verify"
-			key = $cert.PublicKey.EncodedKeyValue.RawData
-			displayName = $cert.Subject
+			key = [System.Convert]::ToBase64String($cert.RawData)
 		}
 	)
 }
-Update-MgApplication -ApplicationId $app.Id -BodyParameter $params
+Update-MgApplication -ApplicationId $app.Id -BodyParameter ($body | ConvertTo-Json)
 
 <# If you create the cert on a remote server but run Graph PowerShell locally, you can use this to copy params locally
 
 On the remote server, run:
 
-$params = @{
+$body = @{
 	keyCredentials = @(
 		@{
-			endDateTime = $cert.NotAfter
-			startDateTime = $cert.NotBefore
-            customKeyIdentifier = [System.Text.Encoding]::ASCII.GetBytes("$($cert.Thumbprint)")
+			keyId = "$(New-Guid)"
 			type = "AsymmetricX509Cert"
 			usage = "Verify"
-			key = $cert.PublicKey.EncodedKeyValue.RawData
-			displayName = $cert.Subject
+			key = [System.Convert]::ToBase64String($cert.RawData)
 		}
 	)
 }
-$params | ConvertTo-Json | Set-Clipboard
+$body | ConvertTo-Json | Set-Clipboard
 
 On the client with Graph PowerShell, run:
 
 $app = Get-MgApplication -Filter "displayName eq 'Patch My PC - Intune Connector'"
 
-$params = @{}
+$body = @{}
 $customObject = Get-Clipboard | ConvertFrom-Json
 $customObject.PSObject.Properties | ForEach-Object {
-    $params[$_.Name] = $_.Value
+    $body[$_.Name] = $_.Value
 }
-Update-MgApplication -ApplicationId $app.Id -BodyParameter $params
+Update-MgApplication -ApplicationId $app.Id -BodyParameter ($body | ConvertTo-Json)
 
 #>
