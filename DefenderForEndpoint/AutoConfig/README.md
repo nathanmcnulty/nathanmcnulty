@@ -101,6 +101,7 @@ $body = @{
     EnableWdavPassiveModeRemediation = $true
     HidePotentialDuplications = $true
     IsolateIncidentsWithDifferentDeviceGroups = $false
+    IsolationExclusionOptIn = $false
     LicenseEnabled = $true
     M365SecureScoreIntegrationEnabled = $true
     MagellanOptOut = $false
@@ -142,6 +143,7 @@ Invoke-RestMethod -Method "POST" -Uri "https://security.microsoft.com/apiproxy/m
 | EnableWdavPassiveModeRemediation | True | [Enable EDR in block mode](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#enable-edr-in-block-mode) |
 | HidePotentialDuplications | True | [Hide potential duplicate device records](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#hide-potential-duplicate-device-records) |
 | IsolateIncidentsWithDifferentDeviceGroups | False  | [Restrict correlation to within scoped device groups​](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#restrict-correlation-to-within-scoped-device-groups) |
+| IsolationExclusionOptIn | False | ??? Discovered 4/27/25 ??? |
 | LicenseEnabled | N/A | ??? Not in portal - Need to check M365 Business Premium and E3 tenant, likely true if licensed but maybe means license level ??? |
 | M365SecureScoreIntegrationEnabled | True  | ??? Not in portal - Likely removed as these are always integrated in XDR now ??? |
 | MagellanOptOut | False | [Device discovery](https://learn.microsoft.com/en-us/defender-endpoint/advanced-features#device-discovery) |
