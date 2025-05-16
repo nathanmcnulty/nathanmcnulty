@@ -48,7 +48,7 @@ $methods | ForEach-Object {
         $groupId  = (Get-MgBetaGroup -Filter "mailNickName eq 'operational-am-$method'").Id
 
         # Get the existing members' objectIds
-        [array]$members = (Get-MgBetaGroupMember -GroupId $groupId).Id
+        [array]$members = (Get-MgBetaGroupMember -GroupId $groupId -All).Id
 
         # If existing members are found and users are registered for the method, compare the lists and store the differences in $add and $remove
         if ($members -and $users) {
@@ -114,7 +114,7 @@ $IsSomethingFalse | ForEach-Object {
     } else {
         # Get the group's objectId and the existing members' objectIds
         $groupId  = (Get-MgBetaGroup -Filter "mailNickName eq 'operational-am-$something-false'").Id
-        [array]$members = (Get-MgBetaGroupMember -GroupId $groupId).Id
+        [array]$members = (Get-MgBetaGroupMember -GroupId $groupId -All).Id
 
         # If existing members are found, compare the list of users to the list of members and store the differences in $add and $remove
         if ($members -and $users) {
@@ -151,6 +151,16 @@ $IsSomethingFalse | ForEach-Object {
     Remove-Variable something,groupId,members,users,add,remove,values -ErrorAction SilentlyContinue
 }
 
+$IsSomethingTrue = @(
+    "IsAdmin",
+    "IsMfaCapable",
+    "IsMfaRegistered",
+    "IsPasswordlessCapable",
+    "IsSsprCapable",
+    "IsSsprEnabled",
+    "IsSsprRegistered"
+)
+
 $IsSomethingTrue | ForEach-Object {
     # Store value in a variable for use in loops and filters
     $something = $_
@@ -169,7 +179,7 @@ $IsSomethingTrue | ForEach-Object {
     } else {
         # Get the group's objectId and the existing members' objectIds
         $groupId  = (Get-MgBetaGroup -Filter "mailNickName eq 'operational-am-$something-true'").Id
-        [array]$members = (Get-MgBetaGroupMember -GroupId $groupId).Id
+        [array]$members = (Get-MgBetaGroupMember -GroupId $groupId -All).Id
 
         # If existing members are found, compare the list of users to the list of members and store the differences in $add and $remove
         if ($members -and $users) {
