@@ -1,4 +1,4 @@
-# TO DO: Look at batching to improve performance
+$groupPrefix = "eog-riskyuser-"
 
 # Helper function to create and update groups
 function ProcessGroup {
@@ -55,27 +55,31 @@ function ProcessGroup {
     if ($remove) { $remove | ForEach-Object { Remove-MgBetaGroupMemberByRef -GroupId $groupId -DirectoryObjectId $_ }}
 }
 
-# Connect with scopes necessary to create groups, update membership, and query users
-Connect-MgGraph -Scopes Group.ReadWrite.All,User.Read.All
+# Connect with scopes necessary to create groups, update membership, and query the Reports API
+Connect-MgGraph -Scopes Group.ReadWrite.All,IdentityRiskyUser.Read.All -NoWelcome
 
-# Get latest per-user MFA state details
-$global:report = Get-MgBetaUser -All -Property id,perUserMfaState
-$global:groups = (Get-MgBetaGroup -Filter "startswith(UniqueName,'operational-pum-')" -Property UniqueName).UniqueName
+# Get latest risky users, uncomment to remove users from groups when they are no longer at risk instead of moving them to the none group
+$global:report = Get-MgBetaRiskyUser -All -Property userPrincipalName,riskLevel,riskState #| Where-Object { $_.RiskState -in ('atRisk','confirmedCompromised') }
+$global:groups = (Get-MgBetaGroup -Filter "startswith(UniqueName,'$groupPrefix')" -Property UniqueName).UniqueName
 
-# If you would prefer to only create groups for states that exist, delete the states section below and uncomment the following command:
-# $states = $report.additionalProperties.perUserMfaState | Select-Object -Unique
+# If you would prefer to only create groups for event types that exist, delete the event types section below and uncomment the following command:
+# $eventTypes = $report.RiskEventType | Select-Object -Unique
 
-# Define states to maintain groups for, delete or comment out ones you don't want
-$states = @(
-    "disabled",
-    "enabled",
-    "enforced"
+# Define event types to maintain groups for, delete or comment out ones you don't want
+$riskLevel  = @(
+    "low",
+    "medium",
+    "high",
+    "hidden",
+    "none"
 )
 
-$states | ForEach-Object {
-    $state = $_
+$riskLevel | ForEach-Object {
+    $level = $_
 
     # Get users currently registered for the method
-    $current = ($report | Where-Object { $state -in $_.additionalProperties.perUserMfaState }).Id
-    ProcessGroup -GroupName "operational-pum-$state" -CurrentUsers $current
+    $current = ($report | Where-Object { $_.RiskLevel -eq $level }).userPrincipalName | ForEach-Object {
+        if ($null -ne $_) { (Get-MgBetaUser -Filter "UserPrincipalName eq '$_'").Id }
+    }
+    ProcessGroup -GroupName "$groupPrefix$level" -CurrentUsers $current
 }

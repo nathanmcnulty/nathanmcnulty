@@ -1,4 +1,4 @@
-# TO DO: Look at batching to improve performance
+$groupPrefix = "eog-riskdetection-"
 
 # Helper function to create and update groups
 function ProcessGroup {
@@ -55,27 +55,46 @@ function ProcessGroup {
     if ($remove) { $remove | ForEach-Object { Remove-MgBetaGroupMemberByRef -GroupId $groupId -DirectoryObjectId $_ }}
 }
 
-# Connect with scopes necessary to create groups, update membership, and query users
-Connect-MgGraph -Scopes Group.ReadWrite.All,User.Read.All
+# Connect with scopes necessary to create groups, update membership, and query the Reports API
+Connect-MgGraph -Scopes Group.ReadWrite.All,IdentityRiskEvent.Read.All -NoWelcome
 
-# Get latest per-user MFA state details
-$global:report = Get-MgBetaUser -All -Property id,perUserMfaState
-$global:groups = (Get-MgBetaGroup -Filter "startswith(UniqueName,'operational-pum-')" -Property UniqueName).UniqueName
+# Get latest risk detection details
+$global:report = Get-MgBetaRiskDetection -All -Filter "Activity eq 'user'" -Property userId,riskEventType,riskState | Where-Object { $_.RiskState -in ('atRisk','confirmedCompromised') }
+$global:groups = (Get-MgBetaGroup -Filter "startswith(UniqueName,'$groupPrefix')" -Property UniqueName).UniqueName
 
-# If you would prefer to only create groups for states that exist, delete the states section below and uncomment the following command:
-# $states = $report.additionalProperties.perUserMfaState | Select-Object -Unique
+# If you would prefer to only create groups for event types that exist, delete the event types section below and uncomment the following command:
+# $eventTypes = $report.RiskEventType | Select-Object -Unique
 
-# Define states to maintain groups for, delete or comment out ones you don't want
-$states = @(
-    "disabled",
-    "enabled",
-    "enforced"
+# Define event types to maintain groups for, delete or comment out ones you don't want
+$eventTypes  = @(
+    "adminConfirmedUserCompromised", 
+    "anomalousToken",
+    "anomalousUserActivity",
+    "anonymizedIPAddress",
+    "generic",
+    "impossibleTravel",
+    "investigationsThreatIntelligence",
+    "suspiciousSendingPatterns",
+    "leakedCredentials",
+    "maliciousIPAddress",
+    "malwareInfectedIPAddress",
+    "mcasSuspiciousInboxManipulationRules",
+    "newCountry",
+    "passwordSpray",
+    "riskyIPAddress",
+    "suspiciousAPITraffic",
+    "suspiciousBrowser",
+    "suspiciousInboxForwarding",
+    "suspiciousIPAddress",
+    "tokenIssuerAnomaly",
+    "unfamiliarFeatures",
+    "unlikelyTravel"
 )
 
-$states | ForEach-Object {
-    $state = $_
+$eventTypes | ForEach-Object {
+    $type = $_
 
     # Get users currently registered for the method
-    $current = ($report | Where-Object { $state -in $_.additionalProperties.perUserMfaState }).Id
-    ProcessGroup -GroupName "operational-pum-$state" -CurrentUsers $current
+    $current = ($report | Where-Object { $_.RiskEventType -eq $type }).UserId
+    ProcessGroup -GroupName "$groupPrefix$type" -CurrentUsers $current
 }
