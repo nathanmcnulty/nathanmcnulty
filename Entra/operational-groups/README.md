@@ -5,7 +5,7 @@ The goal behind this solution is to maintain groups based on auth methods regist
 Here's an example of resetting user passwords, but I would recommend waiting for the groups that determine users in the IsPasswordlessCapable-true group are also not in a group that shows they recently used a weaker method.
 
 ```powershell
-Get-MgGroup -Filter "displayName eq 'operational-am-IsPasswordlessCapable-true'" | ForEach-Object {
+Get-MgGroup -Filter "displayName eq 'eog-authmethods-IsPasswordlessCapable-true'" | ForEach-Object {
   Get-MgGroupMember -GroupId $_.Id | ForEach-Object {
     $passwordProfile  = @{
       forceChangePasswordNextSignIn = $false
