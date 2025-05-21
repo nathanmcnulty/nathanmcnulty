@@ -4,10 +4,10 @@ $groupPrefix = "eog-jobtitle-"
 Connect-MgGraph -Scopes Group.ReadWrite.All,User.Read.All -NoWelcome
 
 # Get jobTitle of all users in the tenant
-$jobTitles = (Get-MgUser -All -Property jobTitle | Where-Object { $null -ne $_.jobTitle } | Select-Object jobTitle -Unique).jobTitle
+$jobTitles = (Get-MgBetaUser -All -Property jobTitle | Where-Object { $null -ne $_.jobTitle } | Select-Object jobTitle -Unique).jobTitle
 
 # Get existing jobTitle groups
-$groups = (Get-MgGroup -Filter "startswith(UniqueName,'$groupPrefix')" -Property UniqueName).UniqueName
+$groups = (Get-MgBetaGroup -Filter "startswith(UniqueName,'$groupPrefix')" -Property UniqueName).UniqueName
 
 # Create jobTitle groups
 $jobTitles | ForEach-Object {
