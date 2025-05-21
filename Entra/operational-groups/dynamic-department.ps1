@@ -4,10 +4,10 @@ $groupPrefix = "eog-department-"
 Connect-MgGraph -Scopes Group.ReadWrite.All,User.Read.All -NoWelcome
 
 # Get department of all users in the tenant
-$departments = (Get-MgUser -All -Property Department | Where-Object { $null -ne $_.Department } | Select-Object Department -Unique).Department
+$departments = (Get-MgBetaUser -All -Property Department | Where-Object { $null -ne $_.Department } | Select-Object Department -Unique).Department
 
 # Get existing department groups
-$groups = (Get-MgGroup -Filter "startswith(UniqueName,'$groupPrefix')" -Property UniqueName).UniqueName
+$groups = (Get-MgBetaGroup -Filter "startswith(UniqueName,'$groupPrefix')" -Property UniqueName).UniqueName
 
 # Create department groups
 $departments | ForEach-Object {
