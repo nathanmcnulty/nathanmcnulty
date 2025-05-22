@@ -17,26 +17,16 @@ Get-MgGroup -Filter "displayName eq 'eog-authmethods-IsPasswordlessCapable-true'
 }
 ```
 
-If you plan to use something like an Azure Automation Account or Function App, you will need the following modules:
+If you plan to use something like an Azure Automation Account or Function App, you only need the **Microsoft.Graph.Authentication** module for these. This runs with better performance and reduces memory use for these environments. Check the graph-powershell folder if you would prefer using full Graph PowerShell cmdlet based scripts.
 
-```
-Microsoft.Graph.Authentication
-Microsoft.Graph.Beta.Groups
-Microsoft.Graph.Beta.Identity.SignIns
-Microsoft.Graph.Beta.Identity.Governance
-Microsoft.Graph.Beta.Reports
-Microsoft.Graph.Beta.Users
-```
-
-And this will grant the necessary permissions to a Managed Identity ;)
+You will also need to run this to grant the necessary permissions to a Managed Identity (update $SP_ID with the objectId of your SP/MI) ;)
 
 ```
 $SP_ID = "9b2b5994-f530-4470-8e4c-832e90d9a290"
-"Group.ReadWrite.All","RoleManagement.Read.Directory","EntitlementManagement.Read.All","AuditLog.Read.All","User.Read.All","IdentityRiskEvent.Read.All" | ForEach-Object {
+"Group.ReadWrite.All","RoleManagement.Read.Directory","EntitlementManagement.Read.All","AuditLog.Read.All","User.Read.All","IdentityRiskEvent.Read.All","Directory.Read.All" | ForEach-Object {
    $PermissionName = $_
    $GraphSP = Get-MgServicePrincipal -Filter "appId eq '00000003-0000-0000-c000-000000000000'"
    $AppRole = $GraphSP.AppRoles | Where-Object {$_.Value -eq $PermissionName -and $_.AllowedMemberTypes -contains "Application"}
    New-MgServicePrincipalAppRoleAssignment -AppRoleId $AppRole.Id -ServicePrincipalId $SP_ID -ResourceId $GraphSP.Id -PrincipalId $SP_ID
 }
-
 ```
