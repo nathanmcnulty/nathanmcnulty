@@ -23,7 +23,7 @@ You will also need to run this to grant the necessary permissions to a Managed I
 
 ```
 $SP_ID = "9b2b5994-f530-4470-8e4c-832e90d9a290"
-"Group.ReadWrite.All","RoleManagement.Read.Directory","EntitlementManagement.Read.All","AuditLog.Read.All","User.Read.All","IdentityRiskEvent.Read.All","Directory.Read.All" | ForEach-Object {
+"Group.ReadWrite.All","RoleManagement.Read.Directory","EntitlementManagement.Read.All","AuditLog.Read.All","User.Read.All","IdentityRiskEvent.Read.All","IdentityRiskyUser.Read.All","Directory.Read.All" | ForEach-Object {
    $PermissionName = $_
    $GraphSP = Get-MgServicePrincipal -Filter "appId eq '00000003-0000-0000-c000-000000000000'"
    $AppRole = $GraphSP.AppRoles | Where-Object {$_.Value -eq $PermissionName -and $_.AllowedMemberTypes -contains "Application"}

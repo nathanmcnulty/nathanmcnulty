@@ -62,7 +62,7 @@ function ProcessGroup {
 }
 
 # Connect with scopes necessary to create groups, update membership, and query the Reports API
-Connect-MgGraph -Identity -NoWelcome -Scopes Group.ReadWrite.All,IdentityRiskyUser.Read.All
+Connect-MgGraph -Identity -NoWelcome
 
 # Get latest risky users, uncomment to remove users from groups when they are no longer at risk instead of moving them to the none group
 $uri = "/beta/identityProtection/riskyUsers?`$select=userPrincipalName,riskLevel,riskState"

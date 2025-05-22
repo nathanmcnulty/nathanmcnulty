@@ -62,7 +62,7 @@ function ProcessGroup {
 }
 
 # Connect with scopes necessary to create groups, update membership, and query users
-Connect-MgGraph -Identity -NoWelcome -Scopes Group.ReadWrite.All,User.Read.All
+Connect-MgGraph -Identity -NoWelcome
 
 # Get latest per-user MFA state details
 $global:report = @()

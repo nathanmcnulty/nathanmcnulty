@@ -62,7 +62,7 @@ function ProcessGroup {
 }
 
 # Connect with scopes necessary to create groups amd read role assignments
-Connect-MgGraph -Identity -NoWelcome -Scopes Group.ReadWrite.All,RoleManagement.Read.Directory,EntitlementManagement.Read.All
+Connect-MgGraph -Identity -NoWelcome
 
 # Get latest $groupPrefix* groups
 $global:groups = (Invoke-MgGraphRequest -Method GET -Uri "/beta/groups?`$filter=startswith(UniqueName,'$groupPrefix')&`$select=UniqueName" | Select-Object -ExpandProperty value).UniqueName

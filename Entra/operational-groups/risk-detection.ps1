@@ -62,7 +62,7 @@ function ProcessGroup {
 }
 
 # Connect with scopes necessary to create groups, update membership, and query the Reports API
-Connect-MgGraph -Identity -NoWelcome -Scopes Group.ReadWrite.All,IdentityRiskEvent.Read.All
+Connect-MgGraph -Identity -NoWelcome
 
 # Get latest risk detection details
 $global:report = @()

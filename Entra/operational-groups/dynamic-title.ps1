@@ -1,7 +1,7 @@
 $groupPrefix = "eog-jobtitle-"
 
 # Connect with scopes necessary to create groups, update membership, and query the Reports API
-Connect-MgGraph -Identity -NoWelcome -Scopes Group.ReadWrite.All,User.Read.All
+Connect-MgGraph -Identity -NoWelcome
 
 # Get jobTitle of all users in the tenant
 $jobTitles = @()
