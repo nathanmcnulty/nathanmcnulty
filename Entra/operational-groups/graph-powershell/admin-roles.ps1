@@ -1,4 +1,4 @@
-$groupPrefix = "eog-perusermfa-"
+$groupPrefix = "eog-adminroles-"
 
 # Helper function to create and update groups
 function ProcessGroup {
@@ -16,19 +16,13 @@ function ProcessGroup {
             securityEnabled = $true
             UniqueName = $GroupName
         }
-        $groupId = (Invoke-MgGraphRequest -Method POST -Uri "/beta/groups" -Body $body).Id
+        $groupId = (New-MgBetaGroup -BodyParameter $body).Id
     } else { 
-        $groupId  = (Invoke-MgGraphRequest -Method GET -Uri "/beta/groups?`$filter=UniqueName eq '$GroupName'").value.Id
+        $groupId  = (Get-MgBetaGroup -Filter "UniqueName eq '$GroupName'").Id 
     }
 
-    # Get the existing members objectIds (paged for all results)
-    $existingUsers = @()
-    $uri = "/beta/groups/$groupId/members?`$select=id&`$top=999"
-    do {
-        $response = Invoke-MgGraphRequest -Method GET -Uri $uri
-        $existingUsers += $response.value.id
-        $uri = $response.'@odata.nextLink'
-    } while ($uri)
+    # Get the existing members objectIds
+    [array]$existingUsers = (Get-MgBetaGroupMember -GroupId $groupId -All).Id
 
     # If existing members are found and users are registered for the method, compare the lists and store the differences in $add and $remove
     if ($existingUsers -and $CurrentUsers) {
@@ -52,44 +46,31 @@ function ProcessGroup {
 
         # Loop through the list of users and add them to the group in batches of 20 (limit for the API)
         while ($values.Count -ne 0) {
-            Invoke-MgGraphRequest -Method PATCH -Uri "/beta/groups/$groupId" -Body @{ "members@odata.bind" = @($values[0..19]) }
+            Update-MgBetaGroup -GroupId $groupId -BodyParameter @{ "members@odata.bind" = $values[0..19] }
             if ($values.Count -gt 20) { $values.RemoveRange(0,20) } else { $values.RemoveRange(0,$values.Count) }
         }
     }
 
     # Remove users from group
-    if ($remove) { $remove | ForEach-Object { Invoke-MgGraphRequest -Method DELETE -Uri "/beta/groups/$groupId/members/$_/`$ref" }}
+    if ($remove) { $remove | ForEach-Object { Remove-MgBetaGroupMemberByRef -GroupId $groupId -DirectoryObjectId $_ }}
 }
 
-# Connect with scopes necessary to create groups, update membership, and query users
-Connect-MgGraph -Identity -NoWelcome -Scopes Group.ReadWrite.All,User.Read.All
+# Connect with scopes necessary to create groups amd read role assignments
+Connect-MgGraph -Scopes Group.ReadWrite.All,RoleManagement.Read.Directory,EntitlementManagement.Read.All -NoWelcome
 
-# Get latest per-user MFA state details
-$global:report = @()
-$uri = "/beta/users?`$select=id,perUserMfaState&`$top=999"
-do {
-    $response = Invoke-MgGraphRequest -Method GET -Uri $uri
-    $report += $response.value
-    $uri = $response.'@odata.nextLink'
-} while ($uri)
-$global:groups = (Invoke-MgGraphRequest -Method GET -Uri "/beta/groups?`$filter=startswith(UniqueName,'$groupPrefix')&`$select=UniqueName").value.UniqueName
+# Get latest $groupPrefix* groups
+$global:groups = (Get-MgBetaGroup -Filter "startswith(UniqueName,'$groupPrefix')" -Property UniqueName).UniqueName
 
-# If you would prefer to only create groups for states that exist, delete the states section below and uncomment the following command:
-# $states = $report.additionalProperties.perUserMfaState | Select-Object -Unique
+# Get privileged role assignments
+$privileged = ((Get-MgBetaRoleManagementDirectoryRoleAssignment -ExpandProperty "roleDefinition" -Filter "roleDefinition/isPrivileged eq true" -Property PrincipalId).PrincipalId | Select-Object -Unique | ForEach-Object { Get-MgDirectoryObject -DirectoryObjectId $_ | Where-Object { $_.AdditionalProperties.servicePrincipalType -notin ('Application','ManagedIdentity') }}).Id
+ProcessGroup -GroupName ($groupPrefix + "privileged") -CurrentUsers $privileged
 
-# Define states to maintain groups for, delete or comment out ones you don't want
-$states = @(
-    "disabled",
-    "enabled",
-    "enforced"
-)
+# Get non-privileged role assignments
+$nonprivileged = ((Get-MgBetaRoleManagementDirectoryRoleAssignment -ExpandProperty "roleDefinition" -Filter "roleDefinition/isPrivileged eq false" -Property PrincipalId).PrincipalId | Select-Object -Unique | ForEach-Object { Get-MgDirectoryObject -DirectoryObjectId $_ | Where-Object { $_.AdditionalProperties.servicePrincipalType -notin ('Application','ManagedIdentity') }}).Id
+ProcessGroup -GroupName ($groupPrefix + "nonprivileged") -CurrentUsers $nonprivileged
 
-$states | ForEach-Object {
-    $state = $_
-
-    # Get users currently registered for the method
-    $current = ($report | Where-Object { $state -in $_.perUserMfaState }).Id
-    ProcessGroup -GroupName "$groupPrefix$state" -CurrentUsers $current
-}
+# All roles
+$all = $privileged + $nonprivileged | Select-Object -Unique
+ProcessGroup -GroupName ($groupPrefix + "all") -CurrentUsers $all
 
 # TO DO: Logging, error handling, batching for performance

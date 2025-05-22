@@ -1,38 +1,32 @@
-$groupPrefix = "eog-jobtitle-"
+$groupPrefix = "eog-department-"
 
 # Connect with scopes necessary to create groups, update membership, and query the Reports API
-Connect-MgGraph -Identity -NoWelcome -Scopes Group.ReadWrite.All,User.Read.All
+Connect-MgGraph -Scopes Group.ReadWrite.All,User.Read.All -NoWelcome
 
-# Get jobTitle of all users in the tenant
-$jobTitles = @()
-$uri = "/beta/users?`$select=jobTitle&`$top=999"
-do {
-    $response = Invoke-MgGraphRequest -Method GET -Uri $uri
-    $jobTitles += $response.value.jobTitle | Where-Object { $null -ne $_ }
-    $uri = $response.'@odata.nextLink'
-} while ($uri)
+# Get department of all users in the tenant
+$departments = (Get-MgBetaUser -All -Property Department | Where-Object { $null -ne $_.Department } | Select-Object Department -Unique).Department
 
-# Get existing jobTitle groups
-$groups = (Invoke-MgGraphRequest -Method GET -Uri "/beta/groups?`$filter=startswith(UniqueName,'$groupPrefix')&`$select=UniqueName").value.UniqueName
+# Get existing department groups
+$groups = (Get-MgBetaGroup -Filter "startswith(UniqueName,'$groupPrefix')" -Property UniqueName).UniqueName
 
-# Create jobTitle groups
-$jobTitles | Select-Object -Unique | ForEach-Object {
+# Create department groups
+$departments | ForEach-Object {
     $groupName = "$groupPrefix$($_ -replace '[^a-zA-Z0-9]','')"
     $groupName = $groupName.Substring(0, [Math]::Min($groupName.Length, 64))
 
     if ($groupName -notin $groups) {
         $body = @{
             displayName = "$groupPrefix$_"
-            description = "jobTitle Group: $_"
+            description = "Department Group: $_"
             mailEnabled = $false
             mailNickname = $groupName
             securityEnabled = $true
             GroupTypes = @("DynamicMembership")
-            MembershipRule = "(user.jobTitle -eq `"$_`")"
+            MembershipRule = "(user.department -eq `"$_`")"
             MembershipRuleProcessingState = "On"
             UniqueName = $groupName
         }
-        Invoke-MgGraphRequest -Method POST -Uri "/beta/groups" -Body $body
+        New-MgBetaGroup -BodyParameter $body
     }
 }
 

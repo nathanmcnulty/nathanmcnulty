@@ -16,13 +16,19 @@ function ProcessGroup {
             securityEnabled = $true
             UniqueName = $GroupName
         }
-        $groupId = (New-MgBetaGroup -BodyParameter $body).Id
+        $groupId = (Invoke-MgGraphRequest -Method POST -Uri "/beta/groups" -Body $body).Id
     } else { 
-        $groupId  = (Get-MgBetaGroup -Filter "UniqueName eq '$GroupName'").Id 
+        $groupId  = (Invoke-MgGraphRequest -Method GET -Uri "/beta/groups?`$filter=UniqueName eq '$GroupName'").value.Id
     }
 
-    # Get the existing members objectIds
-    [array]$existingUsers = (Get-MgBetaGroupMember -GroupId $groupId -All).Id
+    # Get the existing members objectIds (paged for all results)
+    $existingUsers = @()
+    $uri = "/beta/groups/$groupId/members?`$select=id&`$top=999"
+    do {
+        $response = Invoke-MgGraphRequest -Method GET -Uri $uri
+        $existingUsers += $response.value.id
+        $uri = $response.'@odata.nextLink'
+    } while ($uri)
 
     # If existing members are found and users are registered for the method, compare the lists and store the differences in $add and $remove
     if ($existingUsers -and $CurrentUsers) {
@@ -46,21 +52,27 @@ function ProcessGroup {
 
         # Loop through the list of users and add them to the group in batches of 20 (limit for the API)
         while ($values.Count -ne 0) {
-            Update-MgBetaGroup -GroupId $groupId -BodyParameter @{ "members@odata.bind" = $values[0..19] }
+            Invoke-MgGraphRequest -Method PATCH -Uri "/beta/groups/$groupId" -Body @{ "members@odata.bind" = @($values[0..19]) }
             if ($values.Count -gt 20) { $values.RemoveRange(0,20) } else { $values.RemoveRange(0,$values.Count) }
         }
     }
 
     # Remove users from group
-    if ($remove) { $remove | ForEach-Object { Remove-MgBetaGroupMemberByRef -GroupId $groupId -DirectoryObjectId $_ }}
+    if ($remove) { $remove | ForEach-Object { Invoke-MgGraphRequest -Method DELETE -Uri "/beta/groups/$groupId/members/$_/`$ref" }}
 }
 
 # Connect with scopes necessary to create groups, update membership, and query the Reports API
-Connect-MgGraph -Scopes Group.ReadWrite.All,IdentityRiskEvent.Read.All -NoWelcome
+Connect-MgGraph -Identity -NoWelcome -Scopes Group.ReadWrite.All,IdentityRiskEvent.Read.All
 
 # Get latest risk detection details
-$global:report = Get-MgBetaRiskDetection -All -Filter "Activity eq 'user'" -Property userId,riskEventType,riskState | Where-Object { $_.RiskState -in ('atRisk','confirmedCompromised') }
-$global:groups = (Get-MgBetaGroup -Filter "startswith(UniqueName,'$groupPrefix')" -Property UniqueName).UniqueName
+$global:report = @()
+$uri = "/beta/identityProtection/riskDetections?`$filter=Activity eq `'user`'&`$select=userId,riskEventType,riskState"
+do {
+    $response = Invoke-MgGraphRequest -Method GET -Uri $uri
+    $report += $response.value | Where-Object { $_.RiskState -in ('atRisk','confirmedCompromised') }
+    $uri = $response.'@odata.nextLink'
+} while ($uri)
+$global:groups = (Invoke-MgGraphRequest -Method GET -Uri "/beta/groups?`$filter=startswith(UniqueName,'$groupPrefix')&`$select=UniqueName").value.UniqueName
 
 # If you would prefer to only create groups for event types that exist, delete the event types section below and uncomment the following command:
 # $eventTypes = $report.RiskEventType | Select-Object -Unique

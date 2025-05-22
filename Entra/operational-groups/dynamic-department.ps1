@@ -1,16 +1,22 @@
 $groupPrefix = "eog-department-"
 
 # Connect with scopes necessary to create groups, update membership, and query the Reports API
-Connect-MgGraph -Scopes Group.ReadWrite.All,User.Read.All -NoWelcome
+Connect-MgGraph -Identity -NoWelcome -Scopes Group.ReadWrite.All,User.Read.All
 
 # Get department of all users in the tenant
-$departments = (Get-MgBetaUser -All -Property Department | Where-Object { $null -ne $_.Department } | Select-Object Department -Unique).Department
+$departments = @()
+$uri = "/beta/users?`$select=department&`$top=999"
+do {
+    $response = Invoke-MgGraphRequest -Method GET -Uri $uri
+    $departments += $response.value.department | Where-Object { $null -ne $_ }
+    $uri = $response.'@odata.nextLink'
+} while ($uri)
 
 # Get existing department groups
-$groups = (Get-MgBetaGroup -Filter "startswith(UniqueName,'$groupPrefix')" -Property UniqueName).UniqueName
+$groups = (Invoke-MgGraphRequest -Method GET -Uri "/beta/groups?`$filter=startswith(UniqueName,'$groupPrefix')&`$select=UniqueName").value.UniqueName
 
 # Create department groups
-$departments | ForEach-Object {
+$departments | Select-Object -Unique | ForEach-Object {
     $groupName = "$groupPrefix$($_ -replace '[^a-zA-Z0-9]','')"
     $groupName = $groupName.Substring(0, [Math]::Min($groupName.Length, 64))
 
@@ -26,7 +32,7 @@ $departments | ForEach-Object {
             MembershipRuleProcessingState = "On"
             UniqueName = $groupName
         }
-        New-MgBetaGroup -BodyParameter $body
+        Invoke-MgGraphRequest -Method POST -Uri "/beta/groups" -Body $body
     }
 }
 
