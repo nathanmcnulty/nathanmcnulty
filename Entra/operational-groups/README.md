@@ -1,6 +1,6 @@
 # Entra Operational Groups
 
-The goal behind this solution is to maintain groups based on auth methods registered, MFA/passwordless, risk states, device details, sign-in logs, audit logs, and more. We can then use these to build dynamic groups to help with things like automate offboarding from weaker MFA methods and scrambling passwordless user's passwords :)
+The goal behind this solution is to maintain groups based on various details such as registered authentication methods, MFA/passwordless, risk states, device details, sign-in logs, audit logs, and more. We can then use these for policy targeting, to build dynamic groups, or even syncing to on-prem or other cloud solutions. These can even be used to provide some of the Identity Governance features for those only licensed for Entra ID Premium P2 :)
 
 Here's an example of resetting user passwords, but I would recommend waiting for the groups that determine users in the IsPasswordlessCapable-true group are also not in a group that shows they recently used a weaker method.
 
@@ -17,7 +17,7 @@ Get-MgGroup -Filter "displayName eq 'eog-authmethods-IsPasswordlessCapable-true'
 }
 ```
 
-If you plan to use something like an Azure Automation Account or Function App, you only need the **Microsoft.Graph.Authentication** module for these. This runs with better performance and reduces memory use for these environments. Check the graph-powershell folder if you would prefer using full Graph PowerShell cmdlet based scripts.
+If you plan to use something like an Azure Automation account or Function app, you only need the **Microsoft.Graph.Authentication** module for these. This runs with better performance and reduces memory use for these environments, though it's not quite as admin friendly. Check the graph-powershell folder if you would prefer using full Graph PowerShell cmdlet based scripts.
 
 You will also need to run this to grant the necessary permissions to a Managed Identity (update $SP_ID with the objectId of your SP/MI) ;)
 
