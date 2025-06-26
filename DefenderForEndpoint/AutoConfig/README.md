@@ -49,11 +49,9 @@ Now we can create a session with those cookies:
 ```powershell
 # Copy sccauth from the browser
 $sccauth = Read-Host -Prompt "Enter sccauth cookie value" -AsSecureString
-if ($sccauth.Length -ne 2368) { Write-Warning "sccauth was $(sccauth.Length) characters and may be incorrect" }
 
 # Copy xsrf token from the browser
 $xsrf = Read-Host -Prompt "Enter xsrf cookie value" -AsSecureString
-if ($xsrf.Length -ne 347) { Write-Warning "xsrf was $($xsrf.Length) characters and may be incorrect" }
 
 # Create session and cookies
 $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
