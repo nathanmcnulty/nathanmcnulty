@@ -34,4 +34,4 @@ $allAuditLogs | Where-Object { $_.additionalDetails.key -eq "GovernanceLicenseFe
 }
 
 $cost = ($licensedGuests | Select-Object -Unique).count * 0.75
-Write-Output "You have $($licensedGuests | Select-Object -Unique) guest(s) that have used an Identity Governance licensed feature. Estimated cost will be: $cost."
+Write-Output "You have $(($licensedGuests | Select-Object -Unique).count) guest(s) that have used an Identity Governance licensed feature. Estimated cost will be: $cost."
