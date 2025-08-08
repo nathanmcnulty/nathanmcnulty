@@ -1,0 +1,68 @@
+{
+  "templateId": null,
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#identity/conditionalAccess/policies/$entity",
+  "grantControls": {
+    "authenticationStrength@odata.context": "https://graph.microsoft.com/v1.0/$metadata#identity/conditionalAccess/policies('c2b6c7b4-58aa-4eee-ba99-d46463fe934a')/grantControls/authenticationStrength/$entity",
+    "customAuthenticationFactors": [],
+    "authenticationStrength": null,
+    "termsOfUse": [],
+    "operator": "OR",
+    "builtInControls": [
+      "mfa"
+    ]
+  },
+  "displayName": "User-SignInRisk-MediumHigh-RequireMFA",
+  "conditions": {
+    "authenticationFlows": null,
+    "userRiskLevels": [],
+    "servicePrincipalRiskLevels": [],
+    "signInRiskLevels": [
+      "high",
+      "medium"
+    ],
+    "platforms": null,
+    "clientApplications": null,
+    "users": {
+      "excludeGroups": [],
+      "excludeGuestsOrExternalUsers": null,
+      "includeUsers": [
+        "All"
+      ],
+      "includeGuestsOrExternalUsers": null,
+      "includeGroups": [],
+      "excludeUsers": [],
+      "includeRoles": [],
+      "excludeRoles": []
+    },
+    "devices": null,
+    "clientAppTypes": [
+      "all"
+    ],
+    "locations": null,
+    "insiderRiskLevels": null,
+    "applications": {
+      "includeApplications": [
+        "All"
+      ],
+      "excludeApplications": [],
+      "includeUserActions": [],
+      "applicationFilter": null,
+      "includeAuthenticationContextClassReferences": []
+    }
+  },
+  "state": "enabledForReportingButNotEnforced",
+  "sessionControls": {
+    "applicationEnforcedRestrictions": null,
+    "signInFrequency": {
+      "value": null,
+      "isEnabled": true,
+      "authenticationType": "primaryAndSecondaryAuthentication",
+      "frequencyInterval": "everyTime",
+      "type": null
+    },
+    "persistentBrowser": null,
+    "secureSignInSession": null,
+    "cloudAppSecurity": null,
+    "disableResilienceDefaults": null
+  }
+}
