@@ -1,0 +1,156 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "Emergency Access Group Object ID": {
+            "defaultValue": "55555555-5555-5555-5555-555555555555",
+            "type": "String",
+            "metadata": {
+                "description": "GUID of emergency access security group"
+            }
+        },
+        "Logic App Name": {
+            "defaultValue": "emergency-access-exclusion",
+            "type": "String",
+            "metadata": {
+                "description": "Name of Logic App resource to be deployed"
+            }
+        }
+    },
+    "variables": {},
+    "resources": [
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[parameters('Logic App Name')]",
+            "location": "westus2",
+            "identity": {
+                "type": "SystemAssigned"
+            },
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "EmergencyAccountsGroupObjectID": {
+                            "defaultValue": "9d64a833-300f-49bf-a2c4-7b32f4b08c6e",
+                            "type": "String"
+                        },
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        }
+                    },
+                    "triggers": {
+                        "Run_every_3_minutes": {
+                            "recurrence": {
+                                "interval": 3,
+                                "frequency": "Minute"
+                            },
+                            "evaluatedRecurrence": {
+                                "interval": 3,
+                                "frequency": "Minute"
+                            },
+                            "type": "SlidingWindow"
+                        }
+                    },
+                    "actions": {
+                        "Get_all_CA_policies": {
+                            "runAfter": {},
+                            "type": "Http",
+                            "inputs": {
+                                "uri": "https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies",
+                                "method": "GET",
+                                "authentication": {
+                                    "type": "ManagedServiceIdentity",
+                                    "audience": "https://graph.microsoft.com"
+                                }
+                            }
+                        },
+                        "For_each_policy": {
+                            "foreach": "@body('Get_all_CA_policies')?['value']",
+                            "actions": {
+                                "Check_for_exclusion_of_emergency_access_group_from_policy": {
+                                    "actions": {},
+                                    "else": {
+                                        "actions": {
+                                            "Check_status_code_for_success": {
+                                                "actions": {},
+                                                "runAfter": {
+                                                    "Exclude_emergency_access_group": [
+                                                        "Succeeded"
+                                                    ]
+                                                },
+                                                "else": {
+                                                    "actions": {}
+                                                },
+                                                "expression": {
+                                                    "and": [
+                                                        {
+                                                            "equals": [
+                                                                "@outputs('Exclude_emergency_access_group')['statusCode']",
+                                                                204
+                                                            ]
+                                                        }
+                                                    ]
+                                                },
+                                                "type": "If"
+                                            },
+                                            "Exclude_emergency_access_group": {
+                                                "type": "Http",
+                                                "inputs": {
+                                                    "uri": "https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies/@{items('For_each_policy')?['id']}",
+                                                    "method": "PATCH",
+                                                    "headers": {
+                                                        "Content-Type": "application/json"
+                                                    },
+                                                    "body": {
+                                                        "conditions": {
+                                                            "users": {
+                                                                "excludeGroups": [
+                                                                    "@{parameters('EmergencyAccountsGroupObjectID')}"
+                                                                ]
+                                                            }
+                                                        }
+                                                    },
+                                                    "authentication": {
+                                                        "type": "ManagedServiceIdentity",
+                                                        "audience": "https://graph.microsoft.com"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "expression": {
+                                        "and": [
+                                            {
+                                                "contains": [
+                                                    "@item()?['conditions']?['users']?['excludeGroups']",
+                                                    "@parameters('EmergencyAccountsGroupObjectID')"
+                                                ]
+                                            }
+                                        ]
+                                    },
+                                    "type": "If"
+                                }
+                            },
+                            "runAfter": {
+                                "Get_all_CA_policies": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Foreach"
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {}
+                    }
+                }
+            }
+        }
+    ]
+}
