@@ -43,13 +43,13 @@
                         }
                     },
                     "triggers": {
-                        "Run_every_3_minutes": {
+                        "Run_every_5_minutes": {
                             "recurrence": {
-                                "interval": 3,
+                                "interval": 5,
                                 "frequency": "Minute"
                             },
                             "evaluatedRecurrence": {
-                                "interval": 3,
+                                "interval": 5,
                                 "frequency": "Minute"
                             },
                             "type": "SlidingWindow"
