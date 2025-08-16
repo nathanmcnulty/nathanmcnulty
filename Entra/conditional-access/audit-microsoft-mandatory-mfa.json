@@ -1,0 +1,54 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#identity/conditionalAccess/policies/$entity",
+  "displayName": "Audit Microsoft mandatory MFA",
+  "conditions": {
+    "locations": null,
+    "devices": null,
+    "signInRiskLevels": [],
+    "applications": {
+      "applicationFilter": null,
+      "excludeApplications": [],
+      "includeUserActions": [],
+      "includeApplications": [
+        "0c1307d4-29d6-4389-a11c-5cbe7f65d7fa",
+        "04b07795-8ddb-461a-bbee-02f9e1bf7b46",
+        "1950a258-227b-4e31-a9cf-717495945fc2"
+      ],
+      "includeAuthenticationContextClassReferences": []
+    },
+    "authenticationFlows": null,
+    "clientApplications": null,
+    "servicePrincipalRiskLevels": [],
+    "platforms": null,
+    "userRiskLevels": [],
+    "users": {
+      "includeRoles": [],
+      "includeGroups": [],
+      "excludeGroups": [],
+      "includeUsers": [
+        "All"
+      ],
+      "includeGuestsOrExternalUsers": null,
+      "excludeUsers": [],
+      "excludeGuestsOrExternalUsers": null,
+      "excludeRoles": []
+    },
+    "insiderRiskLevels": null,
+    "clientAppTypes": [
+      "all"
+    ]
+  },
+  "templateId": null,
+  "state": "enabledForReportingButNotEnforced",
+  "grantControls": {
+    "authenticationStrength": null,
+    "authenticationStrength@odata.context": "https://graph.microsoft.com/v1.0/$metadata#identity/conditionalAccess/policies('e505c675-33f1-4ef3-bf84-bbdd3d6c4ef1')/grantControls/authenticationStrength/$entity",
+    "operator": "OR",
+    "termsOfUse": [],
+    "customAuthenticationFactors": [],
+    "builtInControls": [
+      "mfa"
+    ]
+  },
+  "sessionControls": null
+}
