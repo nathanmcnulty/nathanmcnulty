@@ -6,13 +6,13 @@ I am currently a Senior Security Solutions Architect for Patriot Consulting prim
 
 #
 # Follow me :)
-<a href="https://blog.nathanmcnulty.com">Blog</a>
+[Blog](https://nathanmcnulty.com)
 
-<a href="https://bsky.app/profile/nathanmcnulty.com">Bluesky</a>
+[Bluesky](https://bsky.app/profile/nathanmcnulty.com)
 
-<a href="https://twitter.com/nathanmcnulty">Twitter</a>
+[Twitter](https://twitter.com/nathanmcnulty)
 
-<a rel="me" href="https://infosec.exchange/@nathanmcnulty">Mastodon</a>
+[LinkedIn](https://www.linkedin.com/in/nathanmcnulty/)
 
 # 
 # Requests
