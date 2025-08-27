@@ -108,9 +108,7 @@
                                                     "body": {
                                                         "conditions": {
                                                             "users": {
-                                                                "excludeGroups": [
-                                                                    "@{parameters('EmergencyAccountsGroupObjectID')}"
-                                                                ]
+                                                                "excludeGroups": "@union(array(parameters('EmergencyAccountsGroupObjectId')),item()?['conditions']?['users']?['excludeGroups'])"
                                                             }
                                                         }
                                                     },
