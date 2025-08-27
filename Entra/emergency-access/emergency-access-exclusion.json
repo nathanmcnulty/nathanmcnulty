@@ -34,7 +34,7 @@
                     "contentVersion": "1.0.0.0",
                     "parameters": {
                         "EmergencyAccountsGroupObjectID": {
-                            "defaultValue": "9d64a833-300f-49bf-a2c4-7b32f4b08c6e",
+                            "defaultValue": "[parameters('Emergency Access Group Object ID')]",
                             "type": "String"
                         },
                         "$connections": {
