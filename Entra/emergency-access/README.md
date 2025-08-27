@@ -4,7 +4,7 @@
 
 ### Logic App - Scheduled
 <details>
-  <summary>Expand for details</summary>
+  <summary>Expand for details</summary><br>
 
 <span style="display:block">[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fnathanmcnulty%2Fnathanmcnulty%2Frefs%2Fheads%2Fmain%2FEntra%2Femergency-access%2Femergency-access-exclusion.json)</span>
 
@@ -16,7 +16,7 @@ This solution exlcudes a security group from all CA policies, so you will need t
 ### Logic App - Sentinel
 
 <details>
-  <summary>Expand for details</summary>
+  <summary>Expand for details</summary><br>
 This solution uses a Sentinel NRT rule to create an alert that triggers a Logic App. The Logic App only runs when an alert is created (so only when a Conditional Access change is detected), and this reduces cost by not running as often as well as limiting the number of actions because it only needs to process the one Conditional Access policy that was created or changed rather than processing all policies.
 
 ```kql
@@ -30,7 +30,7 @@ AuditLogs
 ### Logic App - Azure Monitor
 
 <details>
-  <summary>Expand for details</summary>
+  <summary>Expand for details</summary><br>
 This solution is nearly identical to the Sentinel method above except that Azure Monitor (Log Analytics) can only run the query on an interval (1, 5, 10, or 15 minutes), and the cost to enable alerts may actually be more expensive than running Logic Apps on a schedule. The value here is if you inted to (or already do) create lots of alerts based on your Azure Monitor data.
 
 ```kql
@@ -44,7 +44,7 @@ AuditLogs
 ### Automation account
 
 <details>
-  <summary>Expand for details</summary>
+  <summary>Expand for details</summary><br>
 This solution uses a PowerShell runbook in an Azure Automation account, and it can be configured to run on a schedule or triggered via a webhook. I plan to create an Azure Developer CLI (azd) deployment for this and a few other solutions as a showcase of how that tool works, but for now you can simply copy the code from the script here:
 https://github.com/nathanmcnulty/nathanmcnulty/blob/main/Entra/emergency-access/emergency-access-exclusion.ps1
 </details>
