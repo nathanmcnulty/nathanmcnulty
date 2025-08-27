@@ -6,7 +6,7 @@
 <details>
   <summary>Expand for details</summary>
 
-<span style="display:block">[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fnathanmcnulty%2Fnathanmcnulty%2Ff54023819a4336930237e8403b2df923bf492508%2FEntra%2Femergency-access%2Femergency-access-exclusion.json)</span>
+<span style="display:block">[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fnathanmcnulty%2Fnathanmcnulty%2Frefs%2Fheads%2Fmain%2FEntra%2Femergency-access%2Femergency-access-exclusion.json)</span>
 
 This solution exlcudes a security group from all CA policies, so you will need to create a security group and place your emergency access accounts in this group. Conditional Access caches group memberships, so there is no risk that an outage between Conditional Access and Entra ID will cause issues. You will need the security group objectId during deployment of the Logic App template below.
 
