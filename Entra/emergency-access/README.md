@@ -2,15 +2,56 @@
 
 ## Excluding Emergency Access Accounts from Conditional Access
 
-### Logic App - Sliding Window
+### Logic App - Scheduled
+<details>
+  <summary>Expand for details</summary>
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fnathanmcnulty%2Fnathanmcnulty%2Ff54023819a4336930237e8403b2df923bf492508%2FEntra%2Femergency-access%2Femergency-access-exclusion.json)
+<span style="display:block">[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fnathanmcnulty%2Fnathanmcnulty%2Ff54023819a4336930237e8403b2df923bf492508%2FEntra%2Femergency-access%2Femergency-access-exclusion.json)</span>
 
 This solution exlcudes a security group from all CA policies, so you will need to create a security group and place your emergency access accounts in this group. Conditional Access caches group memberships, so there is no risk that an outage between Conditional Access and Entra ID will cause issues. You will need the security group objectId during deployment of the Logic App template below.
 
 <img width="728" height="709" alt="image" src="https://github.com/user-attachments/assets/25608f7f-00dc-4e0c-8f3c-a16af389f92f" />
+</details>
 
-Once the resource has been created, copy the Managed Identity from Settings - Identity, and use the following script to grant the Managed Identity permissions to modify Conditional Access policies:
+### Logic App - Sentinel
+
+<details>
+  <summary>Expand for details</summary>
+This solution uses a Sentinel NRT rule to create an alert that triggers a Logic App. The Logic App only runs when an alert is created (so only when a Conditional Access change is detected), and this reduces cost by not running as often as well as limiting the number of actions because it only needs to process the one Conditional Access policy that was created or changed rather than processing all policies.
+
+```kql
+AuditLogs
+| where OperationName in ("Add conditional access policy","Update conditional access policy")
+| extend CAPolicyId = parse_json(TargetResources)[0]["id"]
+| where Identity != "emergency-access-exclusion"
+```
+</details>
+
+### Logic App - Azure Monitor
+
+<details>
+  <summary>Expand for details</summary>
+This solution is nearly identical to the Sentinel method above except that Azure Monitor (Log Analytics) can only run the query on an interval (1, 5, 10, or 15 minutes), and the cost to enable alerts may actually be more expensive than running Logic Apps on a schedule. The value here is if you inted to (or already do) create lots of alerts based on your Azure Monitor data.
+
+```kql
+AuditLogs
+| where OperationName in ("Add conditional access policy","Update conditional access policy")
+| extend CAPolicyId = parse_json(TargetResources)[0]["id"]
+| where Identity != "emergency-access-exclusion"
+```
+</details>
+
+### Automation account
+
+<details>
+  <summary>Expand for details</summary>
+This solution uses a PowerShell runbook in an Azure Automation account, and it can be configured to run on a schedule or triggered via a webhook. I plan to create an Azure Developer CLI (azd) deployment for this and a few other solutions as a showcase of how that tool works, but for now you can simply copy the code from the script here:
+https://github.com/nathanmcnulty/nathanmcnulty/blob/main/Entra/emergency-access/emergency-access-exclusion.ps1
+</details>
+
+### Granting Permissions to the Managed Identity
+
+To ensure emergency access accounts are never blocked by Conditional Access policies, we will use some form of automation to check and remediate all Conditional Access policise. For this, we will always want to use a Managed Identity, and that Managed Identity will need permissions in Entra to make the necessary changes in Conditional Access. Regardless of automation tool you choose, you will need to copy the Managed Identity from Settings - Identity, and use the following script to grant the Managed Identity permissions to modify Conditional Access policies:
 
 ```powershell
 $MI = "752c2130-dd18-4804-b2a5-c04edb155335"
@@ -33,3 +74,4 @@ $GraphSP = (Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/
    Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/servicePrincipals/$MI/appRoleAssignments" -Body ($body | ConvertTo-Json) -ContentType "application/json"
 }
 ```
+
