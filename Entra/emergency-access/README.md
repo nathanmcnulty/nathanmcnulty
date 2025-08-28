@@ -17,13 +17,16 @@ This solution exlcudes a security group from all CA policies, so you will need t
 
 <details>
   <summary>Expand for details</summary><br>
-This solution uses a Sentinel NRT rule to create an alert that triggers a Logic App. The Logic App only runs when an alert is created (so only when a Conditional Access change is detected), and this reduces cost by not running as often as well as limiting the number of actions because it only needs to process the one Conditional Access policy that was created or changed rather than processing all policies.
+This solution uses a Sentinel NRT Analytics rule to create an alert that triggers a Logic App. The Logic App only runs when an alert is created (so only when a Conditional Access change is detected), and this reduces cost by not running as often as well as limiting the number of actions because it only needs to process the one Conditional Access policy that was created or changed rather than processing all policies.<br><br>
+  
+The query already excludes the Identity that is based on the default name of the Logic App. If you change the name of the Logic App, you will need to change the query below to reflect the name of the Logic App.<br><br>
 
 ```kql
 AuditLogs
 | where OperationName in ("Add conditional access policy","Update conditional access policy")
 | extend CAPolicyId = parse_json(TargetResources)[0]["id"]
 | where Identity != "emergency-access-exclusion"
+//| where parse_json(InitiatedBy)["app"]["appId"] == '' // Uncomment to exclude all modifications made by apps
 ```
 </details>
 
@@ -31,13 +34,16 @@ AuditLogs
 
 <details>
   <summary>Expand for details</summary><br>
-This solution is nearly identical to the Sentinel method above except that Azure Monitor (Log Analytics) can only run the query on an interval (1, 5, 10, or 15 minutes), and the cost to enable alerts may actually be more expensive than running Logic Apps on a schedule. The value here is if you inted to (or already do) create lots of alerts based on your Azure Monitor data.
+This solution is nearly identical to the Sentinel method above except that Azure Monitor (Log Analytics) can only run the query on an interval (1, 5, 10, or 15 minutes), and the cost to enable alerts may actually be more expensive than running Logic Apps on a schedule. The value here is if you inted to (or already do) create lots of alerts based on your Azure Monitor data.<br><br>
+  
+The query already excludes the Identity that is based on the default name of the Logic App. If you change the name of the Logic App, you will need to change the query below to reflect the name of the Logic App.<br><br>
 
 ```kql
 AuditLogs
 | where OperationName in ("Add conditional access policy","Update conditional access policy")
 | extend CAPolicyId = parse_json(TargetResources)[0]["id"]
 | where Identity != "emergency-access-exclusion"
+//| where parse_json(InitiatedBy)["app"]["appId"] == '' // Uncomment to exclude all modifications made by apps
 ```
 </details>
 
