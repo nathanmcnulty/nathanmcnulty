@@ -31,7 +31,12 @@ AuditLogs
 | where Identity != "emergency-access-exclusion-sentinel"
 //| where parse_json(InitiatedBy)["app"]["appId"] == '' // Uncomment to exclude all modifications made by apps
 ```
+
+https://github.com/user-attachments/assets/f48539ed-7c84-4bb0-9cfb-3492c886a2ab
+
 </details>
+
+
 
 ### Logic App - Azure Monitor
 
