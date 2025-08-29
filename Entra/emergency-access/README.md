@@ -28,7 +28,7 @@ The query below excludes the Managed Identity (to avoid loops) based on the defa
 AuditLogs
 | where OperationName in ("Add conditional access policy","Update conditional access policy")
 | extend CAPolicyId = parse_json(TargetResources)[0]["id"]
-| where Identity != "emergency-access-exclusion"
+| where Identity != "emergency-access-exclusion-sentinel"
 //| where parse_json(InitiatedBy)["app"]["appId"] == '' // Uncomment to exclude all modifications made by apps
 ```
 </details>
