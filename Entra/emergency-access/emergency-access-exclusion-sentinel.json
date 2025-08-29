@@ -1,0 +1,236 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "Emergency Access Group Object ID": {
+            "defaultValue": "55555555-5555-5555-5555-555555555555",
+            "type": "string",
+            "metadata": {
+                "description": "GUID of emergency access security group"
+            }
+        },
+        "Logic App Name": {
+            "defaultValue": "emergency-access-exclusion-sentinel",
+            "type": "string",
+            "metadata": {
+                "description": "Name of Logic App resource to be deployed"
+            }
+        }
+    },
+    "variables": {
+        "SentinelAlertConnectionName": "[concat('azuresentinel-', parameters('Logic App Name'))]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('SentinelAlertConnectionName')]",
+            "location": "[resourceGroup().location]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[variables('SentinelAlertConnectionName')]",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                },
+                "connectionState": "Enabled",
+                "parameterValueSet": null,
+                "parameterValueType": "Alternative"
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[parameters('Logic App Name')]",
+            "location": "westus2",
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/connections', variables('SentinelAlertConnectionName'))]"
+            ],
+            "identity": {
+                "type": "SystemAssigned"
+            },
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "EmergencyAccountsGroupObjectId": {
+                            "defaultValue": "[parameters('Emergency Access Group Object ID')]",
+                            "type": "String"
+                        },
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        }
+                    },
+                    "triggers": {
+                        "Microsoft_Sentinel_alert": {
+                            "type": "ApiConnectionWebhook",
+                            "inputs": {
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                    }
+                                },
+                                "body": {
+                                    "callback_url": "@listCallbackUrl()"
+                                },
+                                "path": "/subscribe"
+                            }
+                        }
+                    },
+                    "actions": {
+                        "Get_CA_policy": {
+                            "runAfter": {
+                                "Parse_Body": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Http",
+                            "inputs": {
+                                "uri": "https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies/@{string(body('Parse_Body')?['CAPolicyId']?[0])}",
+                                "method": "GET",
+                                "authentication": {
+                                    "type": "ManagedServiceIdentity",
+                                    "audience": "https://graph.microsoft.com"
+                                }
+                            }
+                        },
+                        "Parse_Body": {
+                            "runAfter": {},
+                            "type": "ParseJson",
+                            "inputs": {
+                                "content": "@triggerBody()?['ExtendedProperties']?['Custom Details']",
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "Search Query Results Overall Count": {
+                                            "type": "string"
+                                        },
+                                        "Data Sources": {
+                                            "type": "string"
+                                        },
+                                        "Query": {
+                                            "type": "string"
+                                        },
+                                        "OriginalQuery": {
+                                            "type": "string"
+                                        },
+                                        "Query Start Time UTC": {
+                                            "type": "string"
+                                        },
+                                        "Query End Time UTC": {
+                                            "type": "string"
+                                        },
+                                        "Custom Details": {
+                                            "type": "string"
+                                        },
+                                        "Analytic Rule Ids": {
+                                            "type": "string"
+                                        },
+                                        "Event Grouping": {
+                                            "type": "string"
+                                        },
+                                        "Analytic Rule Name": {
+                                            "type": "string"
+                                        },
+                                        "ProcessedBySentinel": {
+                                            "type": "string"
+                                        },
+                                        "Alert generation status": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "Check_for_exclusion_of_emergency_access_group_from_policy-copy": {
+                            "actions": {},
+                            "runAfter": {
+                                "Get_CA_policy": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "else": {
+                                "actions": {
+                                    "Exclude_emergency_access_group": {
+                                        "type": "Http",
+                                        "inputs": {
+                                            "uri": "https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies/@{string(body('Parse_Body')?['CAPolicyId']?[0])}",
+                                            "method": "PATCH",
+                                            "headers": {
+                                                "Content-Type": "application/json"
+                                            },
+                                            "body": {
+                                                "conditions": {
+                                                    "users": {
+                                                        "excludeGroups": "@union(array(parameters('EmergencyAccountsGroupObjectId')),body('Get_CA_policy')?['conditions']?['users']?['excludeGroups'])"
+                                                    }
+                                                }
+                                            },
+                                            "authentication": {
+                                                "type": "ManagedServiceIdentity",
+                                                "audience": "https://graph.microsoft.com"
+                                            }
+                                        }
+                                    },
+                                    "Check_status_code_for_success-copy": {
+                                        "actions": {},
+                                        "runAfter": {
+                                            "Exclude_emergency_access_group": [
+                                                "Succeeded"
+                                            ]
+                                        },
+                                        "else": {
+                                            "actions": {}
+                                        },
+                                        "expression": {
+                                            "and": [
+                                                {
+                                                    "equals": [
+                                                        "@outputs('Exclude_emergency_access_group')?['statusCode']",
+                                                        204
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        "type": "If"
+                                    }
+                                }
+                            },
+                            "expression": {
+                                "and": [
+                                    {
+                                        "contains": [
+                                            "@body('Get_CA_policy')?['conditions']?['users']?['excludeGroups']",
+                                            "@parameters('EmergencyAccountsGroupObjectID')"
+                                        ]
+                                    }
+                                ]
+                            },
+                            "type": "If"
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "azuresentinel": {
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]",
+                                "connectionId": "[resourceId('Microsoft.Web/connections', variables('SentinelAlertConnectionName'))]",
+                                "connectionName": "[variables('SentinelAlertConnectionName')]",
+                                "connectionProperties": {
+                                    "authentication": {
+                                        "type": "ManagedServiceIdentity"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ]
+}
