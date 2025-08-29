@@ -17,6 +17,9 @@ This solution exlcudes a security group from all CA policies, so you will need t
 
 <details>
   <summary>Expand for details</summary><br>
+
+<span style="display:block">[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fnathanmcnulty%2Fnathanmcnulty%2Frefs%2Fheads%2Fmain%2FEntra%2Femergency-access%2Femergency-access-exclusion-sentinel.json)</span>
+
 This solution uses a Sentinel NRT Analytics rule to create an alert that triggers a Logic App. The Logic App only runs when an alert is created (so only when a Conditional Access change is detected), and this reduces cost by not running as often as well as limiting the number of actions because it only needs to process the one Conditional Access policy that was created or changed rather than processing all policies.<br><br>
   
 The query already excludes the Identity that is based on the default name of the Logic App. If you change the name of the Logic App, you will need to change the query below to reflect the name of the Logic App.<br><br>
