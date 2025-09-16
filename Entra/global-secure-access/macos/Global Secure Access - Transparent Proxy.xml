@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+	<dict>
+		<key>PayloadUUID</key>
+		<string>87cbb424-6af7-4748-9d43-f1c5dda7a0a6</string>
+		<key>PayloadType</key>
+		<string>Configuration</string>
+		<key>PayloadOrganization</key>
+		<string>Microsoft Corporation</string>
+		<key>PayloadIdentifier</key>
+		<string>com.microsoft.globalsecureaccess</string>
+		<key>PayloadDisplayName</key>
+		<string>Global Secure Access Proxy Configuration</string>
+		<key>PayloadDescription</key>
+		<string>Add Global Secure Access Proxy Configuration</string>
+		<key>PayloadVersion</key>
+		<integer>1</integer>
+		<key>PayloadEnabled</key>
+		<true/>
+		<key>PayloadRemovalDisallowed</key>
+		<true/>
+		<key>PayloadScope</key>
+		<string>System</string>
+		<key>PayloadContent</key>
+		<array>
+			<dict>
+				<key>PayloadUUID</key>
+				<string>04e13063-2bb8-4b72-b1ed-45290f91af68</string>
+				<key>PayloadType</key>
+				<string>com.apple.vpn.managed</string>
+				<key>PayloadOrganization</key>
+				<string>Microsoft Corporation</string>
+				<key>PayloadIdentifier</key>
+				<string>com.microsoft.globalsecureaccess</string>
+				<key>PayloadDisplayName</key>
+				<string>Global Secure Access Proxy Configuration</string>
+				<key>PayloadDescription</key>
+				<string/>
+				<key>PayloadVersion</key>
+				<integer>1</integer>
+				<key>TransparentProxy</key>
+				<dict>
+					<key>AuthenticationMethod</key>
+					<string>Password</string>
+					<key>Order</key>
+					<integer>1</integer>
+					<key>ProviderBundleIdentifier</key>
+					<string>com.microsoft.globalsecureaccess.tunnel</string>
+					<key>ProviderDesignatedRequirement</key>
+					<string>identifier "com.microsoft.globalsecureaccess.tunnel" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = UBF8T346G9</string>
+					<key>ProviderType</key>
+					<string>app-proxy</string>
+					<key>RemoteAddress</key>
+					<string>100.64.0.0</string>
+				</dict>
+				<key>UserDefinedName</key>
+				<string>Global Secure Access Proxy Configuration</string>
+				<key>VPNSubType</key>
+				<string>com.microsoft.globalsecureaccess</string>
+				<key>VPNType</key>
+				<string>TransparentProxy</string>
+			</dict>
+		</array>
+	</dict>
+</plist>

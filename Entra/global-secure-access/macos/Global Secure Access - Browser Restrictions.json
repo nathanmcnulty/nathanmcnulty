@@ -1,0 +1,50 @@
+﻿{
+    "@odata.context": "https://graph.microsoft.com/beta/$metadata#deviceManagement/configurationPolicies/$entity",
+    "createdDateTime": "2025-09-16T07:22:40.893105Z",
+    "creationSource": null,
+    "description": "",
+    "lastModifiedDateTime": "2025-09-16T07:22:40.893105Z",
+    "name": "Global Secure Access - Browser Restrictions",
+    "platforms": "macOS",
+    "priorityMetaData": null,
+    "roleScopeTagIds": [
+        "0"
+    ],
+    "settingCount": 2,
+    "technologies": "mdm,appleRemoteManagement",
+    "id": "344108c6-b6f4-410e-bccd-9ff720e17b83",
+    "templateReference": {
+        "templateId": "",
+        "templateFamily": "none",
+        "templateDisplayName": null,
+        "templateDisplayVersion": null
+    },
+    "settings": [
+        {
+            "id": "0",
+            "settingInstance": {
+                "@odata.type": "#microsoft.graph.deviceManagementConfigurationChoiceSettingInstance",
+                "settingDefinitionId": "com.apple.managedclient.preferences_quicallowed",
+                "settingInstanceTemplateReference": null,
+                "choiceSettingValue": {
+                    "settingValueTemplateReference": null,
+                    "value": "com.apple.managedclient.preferences_quicallowed_false",
+                    "children": []
+                }
+            }
+        },
+        {
+            "id": "1",
+            "settingInstance": {
+                "@odata.type": "#microsoft.graph.deviceManagementConfigurationChoiceSettingInstance",
+                "settingDefinitionId": "com.apple.managedclient.preferences_dnsoverhttpsmode",
+                "settingInstanceTemplateReference": null,
+                "choiceSettingValue": {
+                    "settingValueTemplateReference": null,
+                    "value": "com.apple.managedclient.preferences_dnsoverhttpsmode_1",
+                    "children": []
+                }
+            }
+        }
+    ]
+}
