@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ConsentText</key>
+	<dict>
+		<key>default</key>
+		<string>This profile will be used to analyze network traffic to ensure a safe browsing experience</string>
+	</dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>FilterBrowsers</key>
+			<true/>
+			<key>FilterSockets</key>
+			<false/>
+			<key>FilterType</key>
+			<string>Plugin</string>
+			<key>PayloadDescription</key>
+			<string>Configures content filtering settings</string>
+			<key>PayloadDisplayName</key>
+			<string>Microsoft Defender for Endpoint Content Filter</string>
+			<key>PayloadIdentifier</key>
+			<string>com.apple.webcontent-filter.AB21A9E0-E9B5-4708-84E0-1A1A861FDDD6</string>
+			<key>PayloadType</key>
+			<string>com.apple.webcontent-filter</string>
+			<key>PayloadUUID</key>
+			<string>AB21A9E0-E9B5-4708-84E0-1A1A861FDDD6</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<key>PluginBundleID</key>
+			<string>com.microsoft.scmx</string>
+			<key>UserDefinedName</key>
+			<string>Microsoft Defender for Endpoint Content Filter</string>
+		</dict>
+	</array>
+	<key>PayloadDescription</key>
+	<string>This profile will be used to analyze network traffic to ensure a safe browsing experience</string>
+	<key>PayloadDisplayName</key>
+	<string>Microsoft Defender for Endpoint Control Filter</string>
+	<key>PayloadIdentifier</key>
+	<string>com.microsoft.scmx.46C8CAF0-2D73-4F21-AC04-00283D167D28</string>
+	<key>PayloadOrganization</key>
+	<string>Microsoft</string>
+	<key>PayloadRemovalDisallowed</key>
+	<false/>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>AAFEED2B-6F6A-4F6C-8688-41AEEB2E28B0</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>
