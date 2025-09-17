@@ -15,7 +15,7 @@ https://learn.microsoft.com/en-us/entra/global-secure-access/how-to-install-wind
 Below are the discovery and remediation scripts:
 
 [Discovery script](./windows/gsa-settings-discovery.ps1)  
-[Remediation script](./windows/gsa-settings-remediation.ps1)
+[Detection script](./windows/gsa-settings-detection.ps1)
 
 ## macOS
 
@@ -49,3 +49,4 @@ Global Secure Access uses the Defender for Endpoint app as a host, so we need to
 
 
 ## Android
+
