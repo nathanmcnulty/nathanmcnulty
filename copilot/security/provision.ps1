@@ -1,20 +1,20 @@
 # Populate values, may need to define subscription if MI given access to multiple subs
 $name = "security-copilot"
+$subscriptionId = "24231b54-f7ab-486d-8522-936f3dddab17"
 $location = "eastus"
 $geo = "us"
 $numberOfUnits = 1
 
 # Connect to Azure as Managed Identity
 Disable-AzContextAutosave -Scope Process | Out-Null
-$context = (Connect-AzAccount -Identity).context
-Set-AzContext -SubscriptionName $context.subscription -DefaultProfile $context | Out-Null
+Connect-AzAccount -Identity
+Set-AzContext -SubscriptionName $subscriptionId | Out-Null
 
 # Ensure capacity is new
-if (!(Get-AzResourceGroup -Name $name -Location $location -ErrorAction SilentlyContinue)) {
-   New-AzResourceGroup -Name $name -Location $location -Force
-} else {
-   Remove-AzResourceGroup $name -Force -Verbose
-   New-AzResourceGroup -Name $name -Location $location -Force
+(Invoke-AzRestMethod -Uri "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$name/providers/Microsoft.SecurityCopilot/capacities/$name`?api-version=2024-11-01-preview" -ErrorAction SilentlyContinue).content | ConvertFrom-Json | Where-Object { $_.systemData.createdAt -lt (Get-Date -AsUTC).AddMinutes(-50) } | ForEach-Object {
+    Write-Host "Deleting existing capacity..."
+    Remove-AzResource -ResourceId $_.id -Force
+    Start-Sleep -Seconds 10
 }
 
 # Base64 encode template to avoid dependencies on external storage!
