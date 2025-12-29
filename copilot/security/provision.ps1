@@ -1,17 +1,18 @@
 # Populate values, may need to define subscription if MI given access to multiple subs
 $name = "security-copilot"
-$subscriptionId = "24231b54-f7ab-486d-8522-936f3dddab17"
+$subscriptionName = "sub-security-copilot"
 $location = "eastus"
 $geo = "us"
 $numberOfUnits = 1
 
 # Connect to Azure as Managed Identity
 Disable-AzContextAutosave -Scope Process | Out-Null
-Connect-AzAccount -Identity
-Set-AzContext -SubscriptionName $subscriptionId | Out-Null
+Connect-AzAccount -Identity | Out-Null
+$subscriptionId = (Set-AzContext -Subscription $subscriptionName).Subscription.Id
 
 # Ensure capacity is new
-(Invoke-AzRestMethod -Uri "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$name/providers/Microsoft.SecurityCopilot/capacities/$name`?api-version=2024-11-01-preview" -ErrorAction SilentlyContinue).content | ConvertFrom-Json | Where-Object { $_.systemData.createdAt -lt (Get-Date -AsUTC).AddMinutes(-50) } | ForEach-Object {
+$oldCapacity = (Invoke-AzRestMethod -Uri "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$name/providers/Microsoft.SecurityCopilot/capacities/$name`?api-version=2024-11-01-preview" -ErrorAction SilentlyContinue).content | ConvertFrom-Json | Where-Object { $_.systemData.createdAt -lt (Get-Date -AsUTC).AddMinutes(-50) } 
+if ($oldCapacity) {
     Write-Host "Deleting existing capacity..."
     Remove-AzResource -ResourceId $_.id -Force
     Start-Sleep -Seconds 10
