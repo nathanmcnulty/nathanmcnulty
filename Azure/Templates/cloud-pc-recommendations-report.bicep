@@ -1,0 +1,170 @@
+param workflows_cloud_pc_recommendations_report_name string = 'cloud-pc-recommendations-report'
+
+resource workflows_cloud_pc_recommendations_report_name_resource 'Microsoft.Logic/workflows@2017-07-01' = {
+  name: workflows_cloud_pc_recommendations_report_name
+  location: 'northcentralus'
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    state: 'Enabled'
+    definition: {
+      '$schema': 'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#'
+      contentVersion: '1.0.0.0'
+      parameters: {
+        '$connections': {
+          defaultValue: {}
+          type: 'Object'
+        }
+      }
+      triggers: {
+        Every_day_at_8_AM: {
+          recurrence: {
+            interval: 1
+            frequency: 'Day'
+            schedule: {
+              hours: [
+                8
+              ]
+              minutes: [
+                0
+              ]
+            }
+          }
+          evaluatedRecurrence: {
+            interval: 1
+            frequency: 'Day'
+            schedule: {
+              hours: [
+                8
+              ]
+              minutes: [
+                0
+              ]
+            }
+          }
+          type: 'Recurrence'
+        }
+      }
+      actions: {
+        Retrieve_Cloud_PC_Recommendations_Reports: {
+          runAfter: {}
+          type: 'Http'
+          inputs: {
+            uri: 'https://graph.microsoft.com/beta/deviceManagement/virtualEndpoint/report/retrieveCloudPcRecommendationReports'
+            method: 'POST'
+            headers: {
+              'Content-Type': 'application/json'
+            }
+            body: {
+              reportType: 'cloudPcUsageCategoryReport'
+            }
+            authentication: {
+              type: 'ManagedServiceIdentity'
+              audience: 'https://graph.microsoft.com'
+            }
+          }
+          runtimeConfiguration: {
+            contentTransfer: {
+              transferMode: 'Chunked'
+            }
+            staticResult: {
+              staticResultOptions: 'Disabled'
+              name: 'Retrieve_Cloud_PC_Recommendations_Reports0'
+            }
+          }
+        }
+        Parse_JSON_to_get_Values: {
+          runAfter: {
+            Retrieve_Cloud_PC_Recommendations_Reports: [
+              'Succeeded'
+            ]
+          }
+          type: 'ParseJson'
+          inputs: {
+            content: '@body(\'Retrieve_Cloud_PC_Recommendations_Reports\')?[\'Values\']'
+            schema: {
+              type: 'array'
+              items: {
+                type: 'array'
+              }
+            }
+          }
+        }
+        For_each_item_in_the_Values_array: {
+          foreach: '@outputs(\'Parse_JSON_to_get_Values\')[\'body\']'
+          actions: {
+            Check_if_Rightsized: {
+              actions: {
+                'Create_JSON_to_include_schema_-_True': {
+                  type: 'Compose'
+                  inputs: {
+                    CloudPcId: '@{items(\'For_each_item_in_the_Values_array\')[0]}'
+                    DeviceId: '@{items(\'For_each_item_in_the_Values_array\')[1]}'
+                    ManagedDeviceName: '@{items(\'For_each_item_in_the_Values_array\')[2]}'
+                    UserPrincipalName: '@{items(\'For_each_item_in_the_Values_array\')[3]}'
+                    ServicePlanId: '@{items(\'For_each_item_in_the_Values_array\')[4]}'
+                    ServicePlanName: '@{items(\'For_each_item_in_the_Values_array\')[5]}'
+                    UsageInsight: '@{items(\'For_each_item_in_the_Values_array\')[6]}'
+                    DevicePerfSummary: '@{items(\'For_each_item_in_the_Values_array\')[7]}'
+                    CurrentSize: '@{items(\'For_each_item_in_the_Values_array\')[8]}'
+                    RecommendedSize: '@{items(\'For_each_item_in_the_Values_array\')[9]}'
+                    CreatedDate: '@{items(\'For_each_item_in_the_Values_array\')[10]}'
+                    ProvisionPolicyId: '@{items(\'For_each_item_in_the_Values_array\')[11]}'
+                    ProvisionPolicyName: '@{items(\'For_each_item_in_the_Values_array\')[12]}'
+                  }
+                }
+              }
+              else: {
+                actions: {
+                  'Create_JSON_to_include_schema_-_False': {
+                    type: 'Compose'
+                    inputs: {
+                      CloudPcId: '@{items(\'For_each_item_in_the_Values_array\')[0]}'
+                      DeviceId: '@{items(\'For_each_item_in_the_Values_array\')[1]}'
+                      ManagedDeviceName: '@{items(\'For_each_item_in_the_Values_array\')[2]}'
+                      UserPrincipalName: '@{items(\'For_each_item_in_the_Values_array\')[3]}'
+                      ServicePlanId: '@{items(\'For_each_item_in_the_Values_array\')[4]}'
+                      ServicePlanName: '@{items(\'For_each_item_in_the_Values_array\')[5]}'
+                      UsageInsight: '@{items(\'For_each_item_in_the_Values_array\')[6]}'
+                      DevicePerfSummary: '@{items(\'For_each_item_in_the_Values_array\')[7]}'
+                      CurrentSize: '@{items(\'For_each_item_in_the_Values_array\')[8]}'
+                      RecommendedSize: '@{items(\'For_each_item_in_the_Values_array\')[9]}'
+                      CreatedDate: '@{items(\'For_each_item_in_the_Values_array\')[10]}'
+                      ProvisionPolicyId: '@{items(\'For_each_item_in_the_Values_array\')[11]}'
+                      ProvisionPolicyName: '@{items(\'For_each_item_in_the_Values_array\')[12]}'
+                    }
+                  }
+                }
+              }
+              expression: {
+                and: [
+                  {
+                    equals: [
+                      '@items(\'For_each_item_in_the_Values_array\')[6]'
+                      'Rightsized'
+                    ]
+                  }
+                ]
+              }
+              type: 'If'
+            }
+          }
+          runAfter: {
+            Parse_JSON_to_get_Values: [
+              'Succeeded'
+            ]
+          }
+          type: 'Foreach'
+        }
+      }
+      outputs: {}
+    }
+    parameters: {
+      '$connections': {
+        type: 'Object'
+        value: {}
+      }
+    }
+  }
+}
