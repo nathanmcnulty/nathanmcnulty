@@ -84,3 +84,8 @@ $all = $privileged + $nonprivileged | Select-Object -Unique
 ProcessGroup -GroupName ($groupPrefix + "all") -CurrentUsers $all
 
 # TO DO: Logging, error handling, batching for performance
+<# Resources for potential improvements:
+
+https://www.powershellgallery.com/packages/Generate-EntraAdminRolesReport/0.1/Content/Generate-EntraAdminRolesReport.ps1
+
+#>
