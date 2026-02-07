@@ -123,7 +123,10 @@ param(
     [switch]$SkipSecret,
     
     [Parameter(Mandatory = $false)]
-    [switch]$SkipKeyVault
+    [switch]$SkipKeyVault,
+    
+    [Parameter(Mandatory = $false)]
+    [switch]$PassThru
 )
 
 $ErrorActionPreference = "Stop"
@@ -662,9 +665,9 @@ if ($SecretExpirationMonths -lt 6) {
 
 Write-Host "`n  ⚠️  SAVE THIS SECRET - It won't be shown again!" -ForegroundColor Yellow
 
-# Wait for secret replication
-Write-Host "  Waiting for secret replication..." -ForegroundColor Gray
-Start-Sleep -Seconds 5
+# Wait for secret replication (Azure AD needs time to replicate the secret globally)
+Write-Host "  Waiting for secret replication (20 seconds)..." -ForegroundColor Gray
+Start-Sleep -Seconds 20
 } elseif (-not $SkipServicePrincipal -and $SkipSecret) {
     Write-Info "⊗ Skipping client secret generation (SkipSecret specified)"
     $clientSecret = "<Secret creation skipped>"
@@ -754,5 +757,25 @@ $statusColor = if ($canGrantConsent) {"Green"} else {"Yellow"}
 
 Write-Host "`n✅ Setup complete! $statusMsg" -ForegroundColor $statusColor
 Write-Host ""
+
+# Output configuration object for pipeline support
+if ($PassThru) {
+    $output = [PSCustomObject]@{
+        TenantId              = $tenantId
+        SubscriptionId        = $subscriptionId
+        ResourceGroupName     = if (-not $SkipKeyVault) { $ResourceGroupName } else { $null }
+        KeyVaultName          = if (-not $SkipKeyVault) { $KeyVaultName } else { $null }
+        KeyVaultSku           = if (-not $SkipKeyVault) { $KeyVaultSku } else { $null }
+        Location              = if (-not $SkipKeyVault) { $Location } else { $null }
+        ServicePrincipalName  = if (-not $SkipServicePrincipal) { $ServicePrincipalName } else { $null }
+        ApplicationId         = if (-not $SkipServicePrincipal) { $appId } else { $null }
+        ServicePrincipalId    = if (-not $SkipServicePrincipal) { $servicePrincipal.Id } else { $null }
+        ClientSecret          = if (-not $SkipServicePrincipal -and -not $SkipSecret) { $clientSecret } else { $null }
+        SecretExpiration      = if (-not $SkipServicePrincipal -and -not $SkipSecret) { $secretExpiration } else { $null }
+        UseKeyVault           = -not $SkipKeyVault
+        ConsentGranted        = $canGrantConsent
+    }
+    Write-Output $output
+}
 
 #endregion

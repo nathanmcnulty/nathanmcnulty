@@ -26,9 +26,10 @@
     Required for Certificate and ClientSecret parameter sets.
 
 .PARAMETER ClientSecret
-    The client secret for service principal authentication.
+    The client secret for service principal authentication (as SecureString).
     Parameter Set: ClientSecret
     NOTE: Less secure than certificate-based authentication. Consider using -ClientCertificatePath instead.
+    Can be created with: ConvertTo-SecureString 'secret' -AsPlainText -Force
 
 .PARAMETER ClientCertificatePath
     Path to the PFX certificate file for service principal authentication.
@@ -49,10 +50,12 @@
     Path to save the credential JSON file. Defaults to current directory.
 
 .EXAMPLE
+    $secret = ConvertTo-SecureString "your-secret" -AsPlainText -Force
     .\New-KeyVaultPasskey.ps1 -UserUpn "user@contoso.com" -DisplayName "Test Key" `
-        -ClientId "your-app-id" -ClientSecret "your-secret"
+        -ClientId "your-app-id" -ClientSecret $secret
     
     Authenticates using client secret (least secure method).
+    Note: ClientSecret must be provided as a SecureString.
 
 .EXAMPLE
     .\New-KeyVaultPasskey.ps1 -UserUpn "user@contoso.com" -DisplayName "Test Key" `
@@ -81,6 +84,9 @@
 
 [CmdletBinding(DefaultParameterSetName = 'ClientSecret', SupportsShouldProcess = $true)]
 param(
+    [Parameter(Mandatory = $false, ValueFromPipeline = $true)]
+    [PSCustomObject]$ConfigFromPipeline,
+    
     [Parameter(Mandatory = $true)]
     [string]$UserUpn,
     
@@ -88,15 +94,15 @@ param(
     [string]$DisplayName = "Software Passkey",
     
     # Authentication - ClientSecret Parameter Set
-    [Parameter(Mandatory = $true, ParameterSetName = 'ClientSecret')]
-    [Parameter(Mandatory = $true, ParameterSetName = 'Certificate')]
+    [Parameter(Mandatory = $false, ParameterSetName = 'ClientSecret')]
+    [Parameter(Mandatory = $false, ParameterSetName = 'Certificate')]
     [string]$ClientId,
     
-    [Parameter(Mandatory = $true, ParameterSetName = 'ClientSecret')]
-    [string]$ClientSecret,
+    [Parameter(Mandatory = $false, ParameterSetName = 'ClientSecret')]
+    [SecureString]$ClientSecret,
     
     # Authentication - Certificate Parameter Set
-    [Parameter(Mandatory = $true, ParameterSetName = 'Certificate')]
+    [Parameter(Mandatory = $false, ParameterSetName = 'Certificate')]
     [ValidateScript({Test-Path $_ -PathType Leaf})]
     [string]$ClientCertificatePath,
     
@@ -104,7 +110,7 @@ param(
     [SecureString]$ClientCertificatePassword,
     
     # Authentication - Managed Identity Parameter Set
-    [Parameter(Mandatory = $true, ParameterSetName = 'ManagedIdentity')]
+    [Parameter(Mandatory = $false, ParameterSetName = 'ManagedIdentity')]
     [switch]$UseManagedIdentity,
     
     [Parameter(Mandatory = $false)]
@@ -118,10 +124,38 @@ param(
     [string]$KeyVaultName,
     
     [Parameter(Mandatory = $false)]
-    [string]$TenantId
+    [string]$TenantId,
+    
+    [Parameter(Mandatory = $false)]
+    [switch]$PassThru
 )
 
 $ErrorActionPreference = "Stop"
+
+# Apply pipeline configuration if provided
+if ($ConfigFromPipeline) {
+    if (-not $ClientId -and $ConfigFromPipeline.ApplicationId) { $ClientId = $ConfigFromPipeline.ApplicationId }
+    if (-not $ClientSecret -and $ConfigFromPipeline.ClientSecret) { 
+        # Convert plain text from pipeline to SecureString
+        $ClientSecret = ConvertTo-SecureString $ConfigFromPipeline.ClientSecret -AsPlainText -Force
+    }
+    if (-not $TenantId -and $ConfigFromPipeline.TenantId) { $TenantId = $ConfigFromPipeline.TenantId }
+    if (-not $KeyVaultName -and $ConfigFromPipeline.KeyVaultName) { $KeyVaultName = $ConfigFromPipeline.KeyVaultName }
+    if (-not $UseKeyVault -and $ConfigFromPipeline.UseKeyVault) { $UseKeyVault = $true }
+}
+
+# Validate authentication parameters
+if (-not $UseManagedIdentity) {
+    if (-not $ClientId) {
+        throw "ClientId is required. Provide via -ClientId parameter or Initialize-PasskeyKeyVault pipeline."
+    }
+    if ($PSCmdlet.ParameterSetName -eq 'ClientSecret' -and -not $ClientSecret) {
+        throw "ClientSecret is required for ClientSecret authentication."
+    }
+    if ($PSCmdlet.ParameterSetName -eq 'Certificate' -and -not $ClientCertificatePath) {
+        throw "ClientCertificatePath is required for Certificate authentication."
+    }
+}
 
 # Validate UserUpn format
 if ($UserUpn -notmatch '^[^@]+@[^@]+\.[^@]+$') {
@@ -186,7 +220,7 @@ function Get-ServicePrincipalToken {
     param(
         [string]$TenantId,
         [string]$ClientId,
-        [string]$ClientSecret,
+        [SecureString]$ClientSecret,
         [string]$ClientCertificatePath,
         [SecureString]$ClientCertificatePassword,
         [string]$Scope,
@@ -200,11 +234,15 @@ function Get-ServicePrincipalToken {
     $tokenUrl = "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/token"
     
     if ($ClientSecret) {
-        # Client Secret authentication
+        # Client Secret authentication - convert SecureString to plain text for API call
+        $plainSecret = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ClientSecret)
+        )
+        
         $tokenBody = @{
             grant_type    = "client_credentials"
             client_id     = $ClientId
-            client_secret = $ClientSecret
+            client_secret = $plainSecret
             scope         = $Scope
         }
         
@@ -215,6 +253,9 @@ function Get-ServicePrincipalToken {
             $errorDetails = if ($_.ErrorDetails.Message) { $_.ErrorDetails.Message } else { $_.Exception.Message }
             Write-Error "Failed to acquire token with client secret for scope $Scope : $errorDetails"
             throw
+        } finally {
+            # Clear the plain text secret from memory
+            if ($plainSecret) { Remove-Variable -Name plainSecret -ErrorAction SilentlyContinue }
         }
     } elseif ($ClientCertificatePath) {
         # Certificate-based authentication
@@ -341,7 +382,7 @@ function Get-TokenParameters {
         [string]$Scope,
         [string]$ResolvedTenantId,
         [string]$ClientId,
-        [string]$ClientSecret,
+        [SecureString]$ClientSecret,
         [string]$ClientCertificatePath,
         [SecureString]$ClientCertificatePassword,
         [string]$ParameterSetName,
@@ -818,5 +859,29 @@ if (-not $UseKeyVault) {
 }
 
 Write-Host ""
+
+# Output credential info for pipeline support
+if ($PassThru) {
+    # Convert SecureString to plain text for pipeline output (needed by PasskeyLogin.ps1)
+    $plainSecret = if ($ClientSecret) {
+        [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ClientSecret)
+        )
+    } else { $null }
+    
+    $output = [PSCustomObject]@{
+        CredentialFilePath    = $OutputPath
+        UserUpn               = $UserUpn
+        DisplayName           = $DisplayName
+        KeyVaultName          = if ($UseKeyVault) { $KeyVaultName } else { $null }
+        KeyName               = if ($UseKeyVault) { $keyName } else { $null }
+        ClientId              = $ClientId
+        ClientSecret          = $plainSecret
+        TenantId              = $TenantId
+        UsesKeyVault          = $UseKeyVault
+        RegistrationTime      = Get-Date
+    }
+    Write-Output $output
+}
 
 #endregion

@@ -16,13 +16,14 @@
     
     The JSON file should contain the following properties:
     - credentialId: FIDO2 credential ID (base64url encoded or UUID format)
-    - privateKey: Private key in PEM format (with BEGIN/END PRIVATE KEY headers)
+    - privateKey: Private key in PEM format (with BEGIN/END PRIVATE KEY headers) OR
+    - keyVault: Object with vaultName, keyName, keyId (for Key Vault-backed passkeys)
     - relyingParty: Relying party identifier (e.g., "login.microsoft.com")
     - url: Authentication URL (e.g., "https://login.microsoft.com")
     - userHandle: FIDO2 user handle (base64url encoded)
     - username: User principal name (e.g., "user@domain.com")
     
-    Example format:
+    Example format (local private key):
     {
         "credentialId": "AbCd1234EfGh5678IjKl",
         "privateKey": "-----BEGIN PRIVATE KEY-----MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg...-----END PRIVATE KEY-----",
@@ -30,6 +31,20 @@
         "url": "https://login.microsoft.com",
         "userHandle": "ExAmPlE_UsErHaNdLe_BaSe64UrLeNcOdEd",
         "username": "user@example.com"
+    }
+    
+    Example format (Key Vault-backed passkey):
+    {
+        "credentialId": "AbCd1234EfGh5678IjKl",
+        "relyingParty": "login.microsoft.com",
+        "url": "https://login.microsoft.com",
+        "userHandle": "ExAmPlE_UsErHaNdLe_BaSe64UrLeNcOdEd",
+        "username": "user@example.com",
+        "keyVault": {
+            "vaultName": "kv-passkey-1234",
+            "keyName": "passkey-user-20260206-224956",
+            "keyId": "https://kv-passkey-1234.vault.azure.net/keys/passkey-user-20260206-224956/a050db6e3e6747be808639e45aa0f714"
+        }
     }
 
 .PARAMETER UserPrincipalName
@@ -42,7 +57,8 @@
     FIDO2 credential ID (base64url encoded or UUID format).
 
 .PARAMETER PrivateKey
-    Private key in PEM format or base64 encoded.
+    Private key in PEM format or base64 encoded (as SecureString).
+    Can be created with: ConvertTo-SecureString 'key-data' -AsPlainText -Force
 
 .PARAMETER RelyingParty
     Relying party identifier. Defaults to "login.microsoft.com".
@@ -56,11 +72,55 @@
 .PARAMETER Proxy
     Proxy server URL if needed.
 
-.EXAMPLE
-    .\PasskeyLogin.ps1 -KeyFilePath .\passkey.json
+.PARAMETER KeyVaultName
+    Name of the Azure Key Vault containing the passkey private key.
+    Required for manual Key Vault authentication (without JSON file).
+    Can override value from JSON file.
+
+.PARAMETER KeyVaultKeyName
+    Name of the key in Azure Key Vault.
+    Required for manual Key Vault authentication (without JSON file).
+    Can override value from JSON file.
+
+.PARAMETER KeyVaultClientId
+    Service principal client ID for Key Vault authentication.
+    Required when using Key Vault-backed passkeys.
+
+.PARAMETER KeyVaultClientSecret
+    Service principal client secret for Key Vault authentication.
+    Required when using Key Vault-backed passkeys.
+
+.PARAMETER KeyVaultTenantId
+    Tenant ID for Key Vault authentication.
+    Required when using Key Vault-backed passkeys.
+
+.PARAMETER PassThru
+    Output authentication result as PSCustomObject for pipeline support.
 
 .EXAMPLE
-    .\PasskeyLogin.ps1 -UserPrincipalName user@domain.com -UserHandle "base64handle" -CredentialId "base64id" -PrivateKey "-----BEGIN PRIVATE KEY-----..."
+    .\PasskeyLogin.ps1 -KeyFilePath .\passkey.json
+    
+    Authenticate using a JSON file containing all passkey details.
+
+.EXAMPLE
+    $privateKey = ConvertTo-SecureString "-----BEGIN PRIVATE KEY-----..." -AsPlainText -Force
+    .\PasskeyLogin.ps1 -UserPrincipalName user@domain.com -UserHandle "base64handle" -CredentialId "base64id" -PrivateKey $privateKey
+    
+    Authenticate using manual parameters with a local private key.
+    Note: PrivateKey must be provided as a SecureString.
+
+.EXAMPLE
+    .\PasskeyLogin.ps1 -UserPrincipalName user@domain.com -UserHandle "base64handle" -CredentialId "base64id" -KeyVaultName "my-keyvault" -KeyVaultKeyName "passkey-key" -KeyVaultClientId "clientid" -KeyVaultClientSecret $secret -KeyVaultTenantId "tenantid"
+    
+    Authenticate using manual parameters with a Key Vault-backed private key.
+
+.EXAMPLE
+    $auth = .\PasskeyLogin.ps1 -KeyFilePath .\passkey.json -PassThru
+    if ($auth.Success) {
+        Write-Host "Authentication successful for $($auth.UserPrincipalName)"
+    }
+    
+    Authenticate and capture result for pipeline or programmatic use.
 
 .NOTES
     Requires PowerShell 7.0 or later for ECDsa PEM support.
@@ -76,23 +136,25 @@
 
 [CmdletBinding()]
 param (
-    [Parameter(Mandatory, ParameterSetName = 'Path')]
+    [Parameter(Mandatory = $false, ValueFromPipeline = $true)]
+    [PSCustomObject]$CredentialFromPipeline,
+    
+    [Parameter(Mandatory = $false)]
     [string]$KeyFilePath,
 
     [Alias('UserName')]
-    [Parameter(Mandatory = $false, ParameterSetName = 'Path')]
-    [Parameter(Mandatory, ParameterSetName = 'Manual')]
+    [Parameter(Mandatory = $false)]
     [string]$UserPrincipalName,
 
-    [Parameter(Mandatory, ParameterSetName = 'Manual')]
+    [Parameter(Mandatory = $false)]
     [string]$UserHandle,
 
     [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '', Justification='CredentialId is a FIDO2 identifier, not a credential')]
-    [Parameter(Mandatory, ParameterSetName = 'Manual')]
+    [Parameter(Mandatory = $false)]
     [string]$CredentialId,
 
-    [Parameter(Mandatory, ParameterSetName = 'Manual')]
-    [string]$PrivateKey,
+    [Parameter(Mandatory = $false)]
+    [SecureString]$PrivateKey,
 
     [Parameter(Mandatory = $false)]
     $RelyingParty = "login.microsoft.com",
@@ -106,7 +168,13 @@ param (
     [Parameter(Mandatory = $false)]
     [string]$Proxy,
     
-    # Key Vault parameters (required only if credential JSON has keyVault property)
+    # Key Vault parameters (can be provided for manual mode or to override JSON values)
+    [Parameter(Mandatory = $false)]
+    [string]$KeyVaultName,
+    
+    [Parameter(Mandatory = $false)]
+    [string]$KeyVaultKeyName,
+    
     [Parameter(Mandatory = $false)]
     [string]$KeyVaultClientId,
     
@@ -114,7 +182,10 @@ param (
     [string]$KeyVaultClientSecret,
     
     [Parameter(Mandatory = $false)]
-    [string]$KeyVaultTenantId
+    [string]$KeyVaultTenantId,
+    
+    [Parameter(Mandatory = $false)]
+    [switch]$PassThru
 )
 
 #region Helper Functions
@@ -398,8 +469,32 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
     throw "Unsupported PowerShell version"
 }
 
+# Apply pipeline configuration if provided
+if ($CredentialFromPipeline) {
+    if (-not $KeyFilePath -and $CredentialFromPipeline.CredentialFilePath) {
+        $KeyFilePath = $CredentialFromPipeline.CredentialFilePath
+    }
+    if (-not $KeyVaultClientId -and $CredentialFromPipeline.ClientId) {
+        $KeyVaultClientId = $CredentialFromPipeline.ClientId
+    }
+    if (-not $KeyVaultClientSecret -and $CredentialFromPipeline.ClientSecret) {
+        $KeyVaultClientSecret = $CredentialFromPipeline.ClientSecret
+    }
+    if (-not $KeyVaultTenantId -and $CredentialFromPipeline.TenantId) {
+        $KeyVaultTenantId = $CredentialFromPipeline.TenantId
+    }
+}
+
+# Validate required parameters
+if (-not $KeyFilePath -and (-not $UserPrincipalName -or -not $UserHandle -or -not $CredentialId)) {
+    throw "Either provide -KeyFilePath or specify manual parameters (-UserPrincipalName, -UserHandle, -CredentialId, and either -PrivateKey or -KeyVaultName). Or pipe from New-KeyVaultPasskey.ps1 with -PassThru."
+}
+if (-not $KeyFilePath -and -not $PrivateKey -and -not $KeyVaultName) {
+    throw "Either -PrivateKey or -KeyVaultName must be provided for manual authentication."
+}
+
 # Load key data if file provided
-if ($PSCmdlet.ParameterSetName -eq 'Path') {
+if ($KeyFilePath) {
     if (-not (Test-Path $KeyFilePath)) {
         Write-Error "Key file not found: $KeyFilePath"
         throw "Key file does not exist"
@@ -467,14 +562,38 @@ $useKeyVault = $false
 $kvInfo = $null
 $kvToken = $null
 
+# Determine Key Vault configuration from parameters or JSON
+$resolvedKvName = $KeyVaultName
+$resolvedKvKeyName = $KeyVaultKeyName
+
 if ($keyData.keyVault) {
+    if (-not $resolvedKvName) { $resolvedKvName = $keyData.keyVault.vaultName }
+    if (-not $resolvedKvKeyName) { $resolvedKvKeyName = $keyData.keyVault.keyName }
+    
+    # Build kvInfo object for use in signing
+    $kvInfo = @{
+        vaultName = $resolvedKvName
+        keyName   = $resolvedKvKeyName
+        keyId     = $keyData.keyVault.keyId
+    }
+} elseif ($KeyVaultName -and $KeyVaultKeyName) {
+    # Manual Key Vault mode (no JSON keyVault object, but parameters provided)
+    $kvInfo = @{
+        vaultName = $KeyVaultName
+        keyName   = $KeyVaultKeyName
+        keyId     = $null
+    }
+}
+
+if ($kvInfo) {
     Write-Host "`n=== Key Vault Configuration ===" -ForegroundColor Cyan
-    Write-Host "  Vault Name:      $($keyData.keyVault.vaultName)" -ForegroundColor White
-    Write-Host "  Key Name:        $($keyData.keyVault.keyName)" -ForegroundColor White
-    Write-Host "  Key ID:          $($keyData.keyVault.keyId)" -ForegroundColor Gray
+    Write-Host "  Vault Name:      $($kvInfo.vaultName)" -ForegroundColor White
+    Write-Host "  Key Name:        $($kvInfo.keyName)" -ForegroundColor White
+    if ($kvInfo.keyId) {
+        Write-Host "  Key ID:          $($kvInfo.keyId)" -ForegroundColor Gray
+    }
     Write-Host "  🔒 Private key secured in Azure Key Vault HSM" -ForegroundColor Green
     $useKeyVault = $true
-    $kvInfo = $keyData.keyVault
     
     # Get Key Vault authentication
     $kvClientId = $KeyVaultClientId
@@ -502,15 +621,32 @@ if ($keyData.keyVault) {
 $PrivateKeyPem = $null
 
 if (-not $useKeyVault) {
-    $PrivateKeyPem = $keyData.privateKey ?? $keyData.keyValue ?? $PrivateKey
-    if (-not $PrivateKeyPem) {
+    # Get private key from JSON or parameter
+    $privateKeySource = $keyData.privateKey ?? $keyData.keyValue ?? $null
+    
+    # If no JSON key and we have a parameter, convert SecureString to plain text
+    if (-not $privateKeySource -and $PrivateKey) {
+        $privateKeySource = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrivateKey)
+        )
+    }
+    
+    if (-not $privateKeySource) {
         Write-Error "Private key not found in JSON file or command line arguments"
         throw "Missing required parameter: PrivateKey"
     }
-    $PrivateKeyPem = ConvertTo-PEMPrivateKey -PrivateKey $PrivateKeyPem
-    if (-not $PrivateKeyPem) {
-        Write-Error "Private key conversion failed - invalid key format"
-        throw "Private key conversion error"
+    
+    try {
+        $PrivateKeyPem = ConvertTo-PEMPrivateKey -PrivateKey $privateKeySource
+        if (-not $PrivateKeyPem) {
+            Write-Error "Private key conversion failed - invalid key format"
+            throw "Private key conversion error"
+        }
+    } finally {
+        # Clear plain text key from memory
+        if ($privateKeySource -and -not ($keyData.privateKey -or $keyData.keyValue)) {
+            Remove-Variable -Name privateKeySource -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -802,11 +938,43 @@ if ($session.Cookies.GetCookies("https://login.microsoftonline.com") | Where-Obj
         
         Write-Host "`n✓ Ready to use authenticated session for API calls" -ForegroundColor Green
         Write-Host ""
+        
+        # Output authentication result for pipeline support
+        if ($PassThru) {
+            $output = [PSCustomObject]@{
+                UserPrincipalName     = $targetUser
+                AuthenticationMethod  = "FIDO2 Passkey"
+                SignatureMethod       = if ($useKeyVault) { "Azure Key Vault" } else { "Local Private Key" }
+                KeyVaultName          = if ($useKeyVault) { $kvInfo.vaultName } else { $null }
+                CookieType            = $ests.Name
+                TokenVariable         = 'ESTSAUTH'
+                SessionVariable       = 'webSession'
+                AuthenticationTime    = Get-Date
+                Success               = $true
+            }
+            Write-Output $output
+        }
     }
 } else {
     Write-Warning "Login flow completed but authentication success could not be verified"
     Write-Host "  Session may still be usable - saved to `$global:webSession" -ForegroundColor Yellow
     $global:webSession = $session
+    
+    # Output incomplete result for pipeline support
+    if ($PassThru) {
+        $output = [PSCustomObject]@{
+            UserPrincipalName     = $targetUser
+            AuthenticationMethod  = "FIDO2 Passkey"
+            SignatureMethod       = if ($useKeyVault) { "Azure Key Vault" } else { "Local Private Key" }
+            KeyVaultName          = if ($useKeyVault) { $kvInfo.vaultName } else { $null }
+            CookieType            = $null
+            TokenVariable         = $null
+            SessionVariable       = 'webSession'
+            AuthenticationTime    = Get-Date
+            Success               = $false
+        }
+        Write-Output $output
+    }
 }
 
 #endregion
