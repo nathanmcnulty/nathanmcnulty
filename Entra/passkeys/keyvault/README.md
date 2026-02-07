@@ -2,29 +2,18 @@
 
 A toolkit for setting up and using passwordless authentication with Azure Key Vault-backed passkeys in Microsoft Entra ID.
 
-## What Are Passkeys?
-
-Passkeys are a modern, passwordless authentication method that replaces traditional passwords with cryptographic key pairs. They're more secure than passwords because:
-- No password to forget, steal, or phish
-- Protected by hardware or secure storage
-- Only work on the websites they were created for
-- Can't be reused across different services
-
 ## Overview
 
 This toolkit includes three PowerShell scripts that work together:
 
 1. **Initialize-PasskeyKeyVault.ps1** - Sets up the Azure infrastructure and Service Principal
 2. **New-KeyVaultPasskey.ps1** - Registers passkeys for users using the Service Principal
-3. **PasskeyLogin.ps1** -Authenticates with the passkeys, optionally passing the request to the Key Vault
+3. **PasskeyLogin.ps1** - Authenticates with the passkeys, optionally signing via Key Vault
 
 ## Prerequisites
 
-Before you start, make sure you have:
-
 ### Software Requirements
-- **PowerShell 7.0 or later** (not Windows PowerShell 5.1)
-  - Download from: https://aka.ms/powershell
+- **PowerShell 7.0 or later** (not Windows PowerShell 5.1) — https://aka.ms/powershell
 - **Required PowerShell Modules:**
   ```powershell
   Install-Module Microsoft.Graph.Authentication -Scope CurrentUser
@@ -33,60 +22,38 @@ Before you start, make sure you have:
 
 ### Azure/Entra Permissions Needed
 
-**For Setup (Script 1):**
-- `Application.ReadWrite.All` - To create service principals (Application Admin or higher)
-- `AppRoleAssignment.ReadWrite.All` - To grant API permissions (optional but recommended, requires Global Admin to consent)
-- `Contributor` or `Owner` role on Azure subscription - To create Key Vault
-
-**For Registration (Script 2):**
-- `UserAuthenticationMethod.ReadWrite.All` - To register passkeys (application permission on the Service Principal)
-
-**For Authentication (Script 3):**
-- No special permissions needed - just runs as the user
+| Script | Permissions |
+|--------|------------|
+| Initialize (Setup) | `Application.ReadWrite.All`, `AppRoleAssignment.ReadWrite.All` (Graph), `Contributor`/`Owner` on Azure subscription |
+| New-KeyVaultPasskey (Registration) | `UserAuthenticationMethod.ReadWrite.All` (application permission on the Service Principal) |
+| PasskeyLogin (Authentication) | No special permissions — runs as the user |
 
 ### Entra ID Configuration
-- **FIDO2 Attestation and Passkey Profiles** (Recommended approach)
-  - **For all users**: Enable passkey profiles and require attestation
-  - **For service accounts/automation**: Create a special passkey profile with attestation disabled
-    1. Go to: Entra ID → Authentication methods → Passkey (FIDO2)
-    2. Click "Configure" → "Add profile (preview)" method
-    3. Create a new passkey profile with attestation enforcement set to **No**
-    4. Assign only service accounts or automation users to this special profile
-  - This provides better security for regular users while allowing software-based passkeys for automation
+
+Passkey registration requires attestation enforcement to be disabled for the target users. The recommended approach is to create a dedicated passkey profile:
+
+1. Go to: Entra ID → Authentication methods → Passkey (FIDO2)
+2. Click "Configure" → "Add profile (preview)"
+3. Create a new profile with attestation enforcement set to **No**
+4. Assign only service accounts or automation users to this profile
+
+This keeps attestation enabled for regular users while allowing software-based passkeys for automation.
 
 ---
 
 ## Quick Start Guide
 
-Follow these steps in order:
-
 ### Step 1: Set Up Azure Infrastructure (~2 minutes)
-
-This creates the Azure Key Vault and service principal needed to register passkeys. See script help for more parameter options, such as resource group, location, premium SKU, etc.
 
 ```powershell
 .\Initialize-PasskeyKeyVault.ps1
 ```
 
-**What it does:**
-- Creates a service principal with permissions to register passkeys
-- Creates an Azure resource group and Key Vault
-- Assigns the service principal access to the Key Vault
-- Generates a client secret for authentication (optional skip parameter)
+Creates the service principal, Azure Key Vault, RBAC assignments, and client secret. The script auto-detects your Graph tenant and switches Azure context to match (useful for multi-tenant accounts).
 
-**What you'll get:**
-At the end, you'll see important information displayed on screen:
-- Tenant ID
-- Service Principal App ID
-- Client Secret (⚠️ **SAVE THIS!** It won't be shown again)
-- Key Vault name
-- Resource group name
-
-💡 **Tip:** Copy the example command shown at the end - you'll use it in Step 2!
+Save the displayed App ID, Client Secret, Key Vault name, and Tenant ID — you'll need them in Step 2. The example command shown at the end can be copied directly.
 
 ### Step 2: Register a Passkey (~30 seconds)
-
-This registers a new passkey for a user and saves it to a file.
 
 ```powershell
 $clientSecret = Read-Host -AsSecureString -Prompt "Enter client secret"
@@ -100,91 +67,89 @@ $clientSecret = Read-Host -AsSecureString -Prompt "Enter client secret"
     -TenantId "your-tenant-id"
 ```
 
-**What it does:**
-- Connects to Microsoft Graph to get passkey challenge
-- Generates a cryptographic key pair in Azure Key Vault
-- Registers the passkey with Entra ID
-- Saves credential information to a JSON file
-
-**What you'll get:**
-- A JSON file containing the passkey details (e.g., `user_My_Test_Passkey_credential.json`)
-- The private key stays secure in Key Vault (never leaves Azure)
-
-⚠️ **Important:** Keep the JSON file safe! You'll need it to authenticate.
+Generates a key pair in Key Vault, registers the passkey with Entra ID, and saves credential metadata to a JSON file. The private key never leaves Azure.
 
 ### Step 3: Test Authentication (~10 seconds)
-
-This tests logging in with the passkey you just created.
 
 ```powershell
 .\PasskeyLogin.ps1 -KeyFilePath ".\user_My_Test_Passkey_credential.json"
 ```
 
-**What it does:**
-- Reads the passkey details from the JSON file
-- Performs FIDO2 authentication with Entra ID
-- Shows success if authentication works
+> **Note:** Wait ~30 seconds after registration before authenticating. Entra ID needs time to propagate newly registered passkeys.
 
-**Success looks like:**
+On success, `$global:ESTSAUTH` and `$global:webSession` are set for use in subsequent API calls.
+
+---
+
+## Pipeline Support
+
+All three scripts support `-PassThru` for pipeline chaining:
+
+```powershell
+.\Initialize-PasskeyKeyVault.ps1 -PassThru |
+    .\New-KeyVaultPasskey.ps1 -UserUpn "user@domain.com" -DisplayName "Automated Passkey" -PassThru |
+    .\PasskeyLogin.ps1 -PassThru
 ```
-✓ Authentication successful! Cookies retrieved.
+
+When piped from New-KeyVaultPasskey, PasskeyLogin automatically waits ~30 seconds for Entra ID passkey propagation before attempting authentication.
+
+**What flows through the pipeline:**
+
+| Stage | Data Passed |
+|-------|-------------|
+| Initialize → New-KeyVaultPasskey | Tenant ID, Client ID, Client Secret, Key Vault Name |
+| New-KeyVaultPasskey → PasskeyLogin | Credential file path, Client ID/Secret, Tenant ID, Registration time |
+
+**Reusing configuration for multiple users:**
+```powershell
+$config = .\Initialize-PasskeyKeyVault.ps1 -PassThru
+
+"user1@domain.com", "user2@domain.com" | ForEach-Object {
+    $config | .\New-KeyVaultPasskey.ps1 -UserUpn $_ -DisplayName "Bulk Passkey" -PassThru
+}
 ```
+
+**Notes:**
+- Without `-PassThru`, scripts display output to console only (backward compatible)
+- Explicit parameters override pipeline values
+- PasskeyLogin always sets `$global:ESTSAUTH` and `$global:webSession` regardless of `-PassThru`
 
 ---
 
 ## Script Reference
 
-### 1. Initialize-PasskeyKeyVault.ps1
+### Initialize-PasskeyKeyVault.ps1
 
-**Purpose:** One-time setup of Azure infrastructure needed for passkey registration.
+One-time setup of Azure infrastructure. Auto-detects the Graph tenant and switches Azure context to match.
 
-#### Basic Usage
 ```powershell
-# Use all defaults
+# Defaults
 .\Initialize-PasskeyKeyVault.ps1
 
-# Customize names and location
+# Customized
 .\Initialize-PasskeyKeyVault.ps1 `
     -KeyVaultName "my-passkey-vault" `
     -ResourceGroupName "rg-passkeys" `
     -ServicePrincipalName "PasskeyService" `
     -Location "westus2"
-```
 
-#### Advanced Options
-
-**Premium Key Vault (HSM-backed keys)**
-```powershell
+# Premium SKU (HSM-backed keys)
 .\Initialize-PasskeyKeyVault.ps1 -KeyVaultSku "premium"
 ```
-Use this for enhanced security where private keys are stored in hardware security modules (HSMs).
 
-**Skip Options** (for existing infrastructure):
+**Skip options** for existing infrastructure: `-SkipServicePrincipal`, `-SkipKeyVault`, `-SkipSecret`
+
+**Notes:**
+- Purge protection enabled by default (cannot be disabled once set)
+- Client secret expires after 12 months (configurable with `-SecretExpirationMonths`)
+- If admin consent fails, instructions for manual consent are displayed
+
+### New-KeyVaultPasskey.ps1
+
+Registers a new passkey for a user in Entra ID.
+
 ```powershell
-# Create only Key Vault (you already have a service principal)
-.\Initialize-PasskeyKeyVault.ps1 -SkipServicePrincipal
-
-# Create only service principal (you already have a Key Vault)
-.\Initialize-PasskeyKeyVault.ps1 -SkipKeyVault
-
-# Create service principal without secret (using certificate instead)
-.\Initialize-PasskeyKeyVault.ps1 -SkipSecret
-```
-
-#### Important Notes
-- **Purge protection is enabled by default** - This prevents accidental deletion of keys
-- **Secret expires after 12 months** - You can change this with `-SecretExpirationMonths`
-- If admin consent fails, you'll see instructions to manually grant it in Azure Portal
-
----
-
-### 2. New-KeyVaultPasskey.ps1
-
-**Purpose:** Registers a new passkey for a user in Entra ID.
-
-#### Basic Usage with Key Vault (Recommended)
-```powershell
-$clientSecret = Read-Host -AsSecureString -Prompt "Enter secret from step 1"
+$clientSecret = Read-Host -AsSecureString -Prompt "Enter client secret"
 .\New-KeyVaultPasskey.ps1 `
     -UserUpn "user@domain.com" `
     -DisplayName "My Laptop" `
@@ -195,373 +160,107 @@ $clientSecret = Read-Host -AsSecureString -Prompt "Enter secret from step 1"
     -TenantId "your-tenant-id"
 ```
 
-#### Authentication Methods
+**Authentication methods:** Client Secret, Certificate (`-ClientCertificatePath`/`-ClientCertificatePassword`), or Managed Identity (`-UseManagedIdentity`).
 
-The script supports three ways to authenticate:
+**Local key generation** (without Key Vault): Omit `-UseKeyVault` and `-KeyVaultName`. The private key will be saved to the JSON file instead.
 
-**1. Client Secret (Simplest)**
+**Options:** `-OutputPath` (credential file location), `-TenantId` (required for Key Vault with client secret/certificate)
+
+### PasskeyLogin.ps1
+
+Authenticates to Entra ID using a registered passkey.
+
 ```powershell
-$clientSecret = Read-Host -AsSecureString -Prompt "Enter client secret"
--ClientId "..." -ClientSecret $clientSecret
-```
-✅ Easy to use  
-⚠️ Less secure - secrets can be stolen
-
-**2. Certificate (More Secure)**
-```powershell
-$certPassword = Read-Host -AsSecureString -Prompt "Enter certificate password"
--ClientId "..." `
--ClientCertificatePath "C:\certs\app-cert.pfx" `
--ClientCertificatePassword $certPassword
-```
-✅ More secure than secrets  
-✅ Supports Conditional Access policies
-
-**3. Managed Identity (Most Secure)**
-```powershell
--UseManagedIdentity `
--UseKeyVault `
--KeyVaultName "..."
-```
-✅ No credentials to manage  
-✅ Automatic token rotation  
-⚠️ Only works with Azure resources
-
-#### Local Key Generation (Without Key Vault)
-```powershell
-$clientSecret = Read-Host -AsSecureString -Prompt "Enter client secret"
-.\New-KeyVaultPasskey.ps1 `
-    -UserUpn "user@domain.com" `
-    -DisplayName "My Device" `
-    -ClientId "..." `
-    -ClientSecret $clientSecret
-```
-⚠️ **Warning:** Private key is saved to the JSON file. Less secure than Key Vault.
-
-#### Important Options
-- `-OutputPath` - Where to save the credential file (default: current directory)
-- `-TenantId` - Required when using Key Vault with client secret/certificate
-
----
-
-### 3. PasskeyLogin.ps1
-
-**Purpose:** Authenticate to Entra ID using a registered passkey.
-
-#### Basic Usage
-```powershell
-# Load passkey from file
+# From file
 .\PasskeyLogin.ps1 -KeyFilePath ".\user_credential.json"
 
-# Optionally specify username
-.\PasskeyLogin.ps1 `
-    -KeyFilePath ".\user_credential.json" `
-    -UserPrincipalName "user@domain.com"
-```
-
-#### Advanced Usage (Manual Parameters)
-If you don't have a JSON file, you can provide all details manually:
-```powershell
-$privateKey = Read-Host -AsSecureString -Prompt "Enter private key"
-.\PasskeyLogin.ps1 `
-    -UserPrincipalName "user@domain.com" `
-    -UserHandle "base64-user-handle" `
-    -CredentialId "base64-credential-id" `
-    -PrivateKey $privateKey
-```
-
-#### Proxy Support
-```powershell
-.\PasskeyLogin.ps1 `
-    -KeyFilePath ".\user_credential.json" `
-    -Proxy "http://proxy.company.com:8080"
-```
-
-#### Key Vault Authentication Parameters
-If your passkey uses Key Vault and the JSON file doesn't have Key Vault credentials stored:
-```powershell
-$clientSecret = Read-Host -AsSecureString -Prompt "Enter client secret"
+# With Key Vault credentials (if not in JSON)
 .\PasskeyLogin.ps1 `
     -KeyFilePath ".\user_credential.json" `
     -KeyVaultClientId "..." `
-    -KeyVaultClientSecret $clientSecret `
+    -KeyVaultClientSecret "..." `
     -KeyVaultTenantId "..."
 ```
 
----
+**Options:** `-Proxy` (HTTP proxy URL), `-UserPrincipalName` (override), manual params (`-UserHandle`, `-CredentialId`, `-PrivateKey`)
 
-## Pipeline Support
-
-All three scripts support PowerShell's pipeline for streamlined automation. This allows you to chain commands together without manually copying values between steps.
-
-### Basic Pipeline Usage
-
-```powershell
-# Complete end-to-end setup and authentication in one command
-.\Initialize-PasskeyKeyVault.ps1 -PassThru | 
-    .\New-KeyVaultPasskey.ps1 -UserUpn "user@domain.com" -DisplayName "Automated Passkey" -PassThru |
-    .\PasskeyLogin.ps1 -PassThru
-```
-
-### What Gets Passed Through the Pipeline
-
-**Initialize → New-KeyVaultPasskey:**
-- Tenant ID
-- Application ID (Client ID)
-- Client Secret
-- Key Vault Name
-- Subscription details
-
-**New-KeyVaultPasskey → PasskeyLogin:**
-- Credential file path
-- Client ID and Secret
-- Tenant ID
-- Key Vault configuration
-
-### Pipeline with Variables
-
-```powershell
-# Store configuration for reuse
-$config = .\Initialize-PasskeyKeyVault.ps1 -PassThru
-
-# Register multiple passkeys using the same configuration
-"user1@domain.com", "user2@domain.com" | ForEach-Object {
-    $config | .\New-KeyVaultPasskey.ps1 -UserUpn $_ -DisplayName "Bulk Passkey" -PassThru
-}
-
-# Authenticate with a specific credential
-$clientSecret = Read-Host -AsSecureString -Prompt "Enter client secret"
-$credential = .\New-KeyVaultPasskey.ps1 `
-    -UserUpn "user@domain.com" `
-    -DisplayName "Test" `
-    -ClientId "..." `
-    -ClientSecret $clientSecret `
-    -UseKeyVault `
-    -KeyVaultName "kv-..." `
-    -TenantId "..." `
-    -PassThru
-
-$authResult = $credential | .\PasskeyLogin.ps1 -PassThru
-
-if ($authResult.Success) {
-    Write-Host "✓ Authenticated as $($authResult.UserPrincipalName)" -ForegroundColor Green
-    # Use $global:ESTSAUTH and $global:webSession for API calls
-}
-```
-
-### Important Notes
-
-- **-PassThru parameter:** Required to output objects for pipeline consumption
-- **Without -PassThru:** Scripts display output to console only (backward compatible)
-- **Manual parameters override pipeline values:** Explicit parameters take precedence
-- **Global variables:** PasskeyLogin.ps1 always sets `$global:ESTSAUTH` and `$global:webSession`
-
----
-
-## Common Scenarios
-
-### Scenario 1: First-Time Setup for Testing
-
-1. **Run setup** (creates everything with defaults):
-   ```powershell
-   .\Initialize-PasskeyKeyVault.ps1
-   ```
-
-2. **Copy the displayed values** (App ID, Client Secret, Key Vault name, Tenant ID)
-
-3. **Register a test passkey**:
-   ```powershell
-   $clientSecret = Read-Host -AsSecureString -Prompt "Enter client secret"
-   .\New-KeyVaultPasskey.ps1 `
-       -UserUpn "testuser@yourdomain.com" `
-       -DisplayName "Test Key" `
-       -UseKeyVault `
-       -KeyVaultName "kv-passkey-1234" `
-       -ClientId "your-app-id" `
-       -ClientSecret $clientSecret `
-       -TenantId "your-tenant-id"
-   ```
-
-4. **Test it works**:
-   ```powershell
-   .\PasskeyLogin.ps1 -KeyFilePath ".\testuser_Test_Key_credential.json"
-   ```
-
-### Scenario 2: Production Deployment with Certificate
-
-1. **Create a certificate** for the service principal:
-   ```powershell
-   $cert = New-SelfSignedCertificate -Subject "CN=PasskeyService" `
-       -CertStoreLocation "Cert:\CurrentUser\My" `
-       -KeyExportPolicy Exportable `
-       -KeySpec Signature `
-       -KeyLength 2048 `
-       -NotAfter (Get-Date).AddYears(2)
-   
-   $pwd = ConvertTo-SecureString -String "YourPassword" -Force -AsPlainText
-   Export-PfxCertificate -Cert $cert -FilePath ".\passkey-cert.pfx" -Password $pwd
-   ```
-
-2. **Upload certificate to service principal** in Azure Portal:
-   - Go to Entra ID → App Registrations → Your App → Certificates & secrets
-   - Upload the .cer file (export from certificate)
-
-3. **Use certificate for registration**:
-   ```powershell
-   $certPassword = Read-Host -AsSecureString -Prompt "Enter certificate password"
-   .\New-KeyVaultPasskey.ps1 `
-       -UserUpn "user@domain.com" `
-       -DisplayName "Production Key" `
-       -UseKeyVault `
-       -KeyVaultName "kv-prod-passkeys" `
-       -ClientId "your-app-id" `
-       -ClientCertificatePath ".\passkey-cert.pfx" `
-       -ClientCertificatePassword $certPassword `
-       -TenantId "your-tenant-id"
-   ```
-
-### Scenario 3: Using Managed Identity on Azure VM
-
-1. **Create the service principal** (run this once from any machine):
-   ```powershell
-   .\Initialize-PasskeyKeyVault.ps1 -SkipSecret
-   ```
-
-2. **Assign managed identity to your Azure VM**:
-   - In Azure Portal → VM → Identity → System assigned → On
-   - Grant the managed identity "Key Vault Crypto Officer" role on the Key Vault
-
-3. **Register passkeys from the VM** (no credentials needed!):
-   ```powershell
-   .\New-KeyVaultPasskey.ps1 `
-       -UserUpn "user@domain.com" `
-       -DisplayName "User Device" `
-       -UseManagedIdentity `
-       -UseKeyVault `
-       -KeyVaultName "kv-passkey-1234"
-   ```
+**Output:** Sets `$global:ESTSAUTH` (auth cookie) and `$global:webSession` (web session). With `-PassThru`, returns a result object with `Success`, `UserPrincipalName`, `AuthenticationMethod`, etc.
 
 ---
 
 ## Troubleshooting
 
 ### "Attestation enforcement must be disabled"
-**Problem:** Script fails with message about attestation.
-
-**Solution:**
-
-**Recommended approach (Production):**
-1. Go to Azure Portal → Entra ID → Protection → Authentication methods
-2. Click "FIDO2 Security Key" → Configure
-3. Create a new passkey profile specifically for service accounts/automation:
-   - Name: "Service Account Passkeys" (or similar)
-   - Enforce attestation: **No**
-   - Key restrictions: Allow all keys
-4. Assign only service accounts or automation users to this profile
-5. Keep attestation enabled for your default profile (regular users)
-
-**Quick workaround (Testing only):**
-1. Go to Azure Portal → Entra ID → Protection → Authentication methods
-2. Click "FIDO2 Security Key"
-3. Set "Enforce attestation" to **No**
-4. Click Save
-
-⚠️ **Note:** Disabling attestation globally reduces security. Use passkey profiles to limit this to specific accounts only.
+Create a passkey profile with attestation disabled and assign only the target users. See [Entra ID Configuration](#entra-id-configuration) above.
 
 ### "Permission denied" or "Forbidden"
-**Problem:** Authentication fails even with correct credentials.
-
-**Solution:**
-- Check the service principal has `UserAuthenticationMethod.ReadWrite.All` permission
-- Verify admin consent has been granted (check in App registrations → API permissions)
-- If using Managed Identity, verify it has "Key Vault Crypto Officer" role
+- Verify the service principal has `UserAuthenticationMethod.ReadWrite.All` with admin consent granted
+- For Managed Identity, verify "Key Vault Crypto Officer" role on the Key Vault
 
 ### "Key Vault not found"
-**Problem:** Cannot access Key Vault.
-
-**Solution:**
-- Verify the Key Vault name is correct (check in Azure Portal)
-- Ensure your account/service principal has appropriate role assignment
-- Check if you're logged into the right Azure subscription (`Get-AzContext`)
+- Verify the Key Vault name and that you're in the correct subscription (`Get-AzContext`)
+- Ensure the service principal has the appropriate role assignment
 
 ### "Failed to retrieve challenge"
-**Problem:** Cannot get passkey creation challenge from Entra ID.
-
-**Solution:**
 - Verify the user exists in Entra ID
-- Check your Graph token has `UserAuthenticationMethod.ReadWrite.All` permission
-- Ensure you're using application permissions, not delegated permissions
+- Ensure the Graph token uses application permissions (not delegated)
 
-### JSON file not found
-**Problem:** PasskeyLogin.ps1 can't find the credential file.
+### Authentication fails after passkey registration
+- Entra ID needs ~30 seconds to propagate newly registered passkeys
+- When using the pipeline, this delay is handled automatically
+- When running scripts manually, wait 30 seconds between registration and authentication
 
-**Solution:**
-- Use the full path: `.\PasskeyLogin.ps1 -KeyFilePath "C:\full\path\to\file.json"`
-- Make sure you're in the correct directory
-- Check the filename matches exactly (case-sensitive on some systems)
+### Multi-tenant Azure account issues
+- Initialize-PasskeyKeyVault.ps1 auto-detects your Graph tenant and switches Azure context to match
+- If you have access to many tenants, the Azure login may show warnings about inaccessible tenants — these are harmless and suppressed automatically
 
 ---
 
 ## Security Best Practices
 
 ### ✅ DO:
-- **Use Key Vault** for storing private keys (use `-UseKeyVault` parameter)
+- **Use Key Vault** for storing private keys (`-UseKeyVault`)
 - **Use Managed Identity** when running on Azure resources
 - **Use certificates** instead of client secrets for service principals
-- **Enable purge protection** on Key Vault (enabled by default)
+- **Use Premium SKU** Key Vault in production (HSM-backed keys)
 - **Store credential JSON files securely** (treat like passwords)
-- **Use Premium SKU** for Key Vault in production (HSM-backed keys)
 - **Rotate client secrets** before they expire (default: 12 months)
-- **Test in a non-production environment first**
 
 ### ❌ DON'T:
 - Store client secrets in scripts or version control
-- Share credential JSON files via unsecured channels (email, Slack, etc.)
+- Share credential JSON files via unsecured channels
 - Use local key generation for production workloads
 - Disable soft delete or purge protection on Key Vault
-- Give service principals more permissions than needed
-- Keep expired or unused passkeys registered
-
-### Recommended Setup for Production:
-1. Use **Premium SKU** Key Vault with HSM-backed keys
-2. Use **Managed Identity** or **certificate-based authentication**
-3. Enable **soft delete** (90 days) and **purge protection** (default)
-4. Store credential files in a **secure password manager** or encrypted storage
-5. Set up **Azure Monitor alerts** for Key Vault access
-6. Implement **Conditional Access policies** to enforce passkey usage
-7. Regularly **audit** registered authentication methods
 
 ---
 
 ## File Structure
 
-After running all scripts, you'll have:
-
 ```
-passkeys/
-├── Initialize-PasskeyKeyVault.ps1    # Setup script
-├── New-KeyVaultPasskey.ps1           # Registration script
-├── PasskeyLogin.ps1                  # Authentication script
-├── README.md                         # This file
-└── username_DisplayName_credential.json  # Generated credential file(s)
+passkeys/keyvault/
+├── Initialize-PasskeyKeyVault.ps1          # Setup script
+├── New-KeyVaultPasskey.ps1                 # Registration script
+├── PasskeyLogin.ps1                        # Authentication script
+├── README.md                               # This file
+└── user_DisplayName_credential.json        # Generated credential file(s)
 ```
 
-**Credential JSON Format:**
+**Credential JSON format:**
 ```json
 {
-  "credentialId": "base64url-encoded-id",
-  "relyingParty": "login.microsoft.com",
   "url": "https://login.microsoft.com",
-  "userHandle": "base64url-encoded-handle",
-  "username": "user@domain.com",
-  "signCount": 0,
+  "userName": "user@domain.com",
+  "methodId": "base64url-method-id",
+  "displayName": "My Passkey",
+  "relyingParty": "login.microsoft.com",
+  "credentialId": "base64url-credential-id",
+  "userHandle": "base64url-user-handle",
   "keyVault": {
     "vaultName": "kv-passkey-1234",
-    "keyName": "passkey-a1b2c3d4",
-    "clientId": "app-id",
-    "tenantId": "tenant-id",
-    "clientSecret": "secret"
-  }
+    "keyName": "passkey-user-20260207-120000",
+    "keyId": "https://kv-passkey-1234.vault.azure.net/keys/passkey-user-20260207-120000/abc123"
+  },
+  "createdDateTime": "2026-02-07T12:00:00Z"
 }
 ```
 
@@ -569,32 +268,14 @@ passkeys/
 
 ## Additional Resources
 
-### Microsoft Documentation
 - [Passkeys in Microsoft Entra ID](https://learn.microsoft.com/entra/identity/authentication/how-to-enable-passkey-fido2)
-- [FIDO2 Security Keys](https://learn.microsoft.com/entra/identity/authentication/concept-authentication-passwordless#fido2-security-keys)
 - [Azure Key Vault Best Practices](https://learn.microsoft.com/azure/key-vault/general/best-practices)
 - [Managed Identities](https://learn.microsoft.com/entra/identity/managed-identities-azure-resources/overview)
-
-### Standards
 - [WebAuthn Specification](https://www.w3.org/TR/webauthn-2/)
-- [FIDO2 CTAP2 Specification](https://fidoalliance.org/specs/fido-v2.0-ps-20190130/fido-client-to-authenticator-protocol-v2.0-ps-20190130.html)
-
-### Security Frameworks
-- [Microsoft Security Benchmark - Identity Management](https://learn.microsoft.com/security/benchmark/azure/security-control-identity-management)
-- [CIS Azure Foundations Benchmark](https://www.cisecurity.org/benchmark/azure)
 
 ---
 
-## Support and Contributions
-
 **Author:** Nathan McNulty  
-**Date:** February 6, 2026  
 **Based on work by:** Fabian Bader (TokenTacticsV2), Jos Lieben (Lieben Consultancy)
 
 For issues, questions, or contributions, please refer to the main repository.
-
----
-
-## License
-
-Please refer to the LICENSE file in the root of the repository.

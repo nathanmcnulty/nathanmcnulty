@@ -135,9 +135,17 @@ $ErrorActionPreference = "Stop"
 # Apply pipeline configuration if provided
 if ($ConfigFromPipeline) {
     if (-not $ClientId -and $ConfigFromPipeline.ApplicationId) { $ClientId = $ConfigFromPipeline.ApplicationId }
-    if (-not $ClientSecret -and $ConfigFromPipeline.ClientSecret) { 
+    if (-not $ClientSecret -and $ConfigFromPipeline.ClientSecret) {
+        # Check if it looks like a GUID (secret ID) instead of actual secret
+        if ($ConfigFromPipeline.ClientSecret -match '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$') {
+            Write-Error "Pipeline provided a GUID as ClientSecret - this is the secret ID, not the secret value!"
+            Write-Error "The secret value should be a long random string, not a GUID."
+            throw "Invalid client secret format received from pipeline"
+        }
+        
         # Convert plain text from pipeline to SecureString
         $ClientSecret = ConvertTo-SecureString $ConfigFromPipeline.ClientSecret -AsPlainText -Force
+        Write-Verbose "Converted pipeline ClientSecret to SecureString (length: $($ConfigFromPipeline.ClientSecret.Length))"
     }
     if (-not $TenantId -and $ConfigFromPipeline.TenantId) { $TenantId = $ConfigFromPipeline.TenantId }
     if (-not $KeyVaultName -and $ConfigFromPipeline.KeyVaultName) { $KeyVaultName = $ConfigFromPipeline.KeyVaultName }
@@ -164,36 +172,19 @@ if ($UserUpn -notmatch '^[^@]+@[^@]+\.[^@]+$') {
 
 # Validate Key Vault parameters
 if ($UseKeyVault) {
-    if (-not $KeyVaultName) {
-        throw "KeyVaultName is required when UseKeyVault is specified"
-    }
-    if (-not $TenantId -and -not $UseManagedIdentity) {
-        throw "TenantId is required when UseKeyVault is specified (not needed for Managed Identity)"
-    }
-    Write-Host "Using Azure Key Vault: $KeyVaultName" -ForegroundColor Cyan
-    Write-Host "Private key will remain in Key Vault HSM" -ForegroundColor Green
+    if (-not $KeyVaultName) { throw "KeyVaultName required for UseKeyVault" }
+    if (-not $TenantId -and -not $UseManagedIdentity) { throw "TenantId required for UseKeyVault" }
+    Write-Host "Key Vault: $KeyVaultName (private key secured in HSM for Premium SKU)" -ForegroundColor Cyan
 } else {
-    Write-Host "Using local key generation" -ForegroundColor Cyan
-    Write-Host "Private key will be exported to file" -ForegroundColor Yellow
+    Write-Host "Local key generation (private key in file)" -ForegroundColor Cyan
 }
 
-# Display authentication method
-Write-Host "Authentication Method: " -NoNewline -ForegroundColor Cyan
+# Display authentication method  
+Write-Host "Auth: " -NoNewline -ForegroundColor Cyan
 switch ($PSCmdlet.ParameterSetName) {
-    'ManagedIdentity' {
-        Write-Host "Managed Identity (Most Secure)" -ForegroundColor Green
-        Write-Host "  ✓ No credential management required" -ForegroundColor Gray
-        Write-Host "  ✓ Automatic token rotation" -ForegroundColor Gray
-    }
-    'Certificate' {
-        Write-Host "Certificate-based Service Principal (Recommended)" -ForegroundColor Green
-        Write-Host "  ✓ Phishing-resistant authentication" -ForegroundColor Gray
-        Write-Host "  ✓ Supports Conditional Access" -ForegroundColor Gray
-    }
-    'ClientSecret' {
-        Write-Host "Client Secret (Less Secure)" -ForegroundColor Yellow
-        Write-Warning "Consider using Managed Identity or Certificate authentication for better security"
-    }
+    'ManagedIdentity' { Write-Host "Managed Identity" -ForegroundColor Green }
+    'Certificate' { Write-Host "Certificate" -ForegroundColor Green }
+    'ClientSecret' { Write-Host "Client Secret" -ForegroundColor Yellow }
 }
 
 #region Helper Functions
@@ -209,10 +200,7 @@ function Get-ManagedIdentityToken {
         $response = Invoke-RestMethod -Uri $endpoint -Method GET -Headers @{ Metadata = "true" }
         return $response.access_token
     } catch {
-        $errorMessage = if ($_.ErrorDetails.Message) { $_.ErrorDetails.Message } else { $_.Exception.Message }
-        Write-Error "Failed to acquire Managed Identity token for scope $Scope : $errorMessage"
-        Write-Error "Ensure this script is running on an Azure resource with Managed Identity enabled"
-        throw
+        throw "Failed to acquire Managed Identity token for $Scope. Ensure running on Azure resource with Managed Identity enabled."
     }
 }
 
@@ -239,6 +227,20 @@ function Get-ServicePrincipalToken {
             [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ClientSecret)
         )
         
+        # Diagnostic: Validate the secret format before sending
+        Write-Verbose "Secret length after SecureString conversion: $($plainSecret.Length) chars"
+        
+        if ([string]::IsNullOrEmpty($plainSecret)) {
+            Write-Error "SecureString conversion resulted in empty string!"
+            throw "Client secret conversion failed - empty result"
+        }
+        
+        if ($plainSecret -match '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$') {
+            Write-Error "SecureString contains a GUID - this is the secret ID, not the secret value!"
+            Write-Error "The pipeline may have passed the wrong value."
+            throw "Invalid client secret format - received GUID instead of secret value"
+        }
+        
         $tokenBody = @{
             grant_type    = "client_credentials"
             client_id     = $ClientId
@@ -250,8 +252,7 @@ function Get-ServicePrincipalToken {
             $response = Invoke-RestMethod -Uri $tokenUrl -Method POST -Body $tokenBody -ContentType "application/x-www-form-urlencoded"
             return $response.access_token
         } catch {
-            $errorDetails = if ($_.ErrorDetails.Message) { $_.ErrorDetails.Message } else { $_.Exception.Message }
-            Write-Error "Failed to acquire token with client secret for scope $Scope : $errorDetails"
+            Write-Error "Token acquisition failed for scope $Scope : $($_.Exception.Message)"
             throw
         } finally {
             # Clear the plain text secret from memory
@@ -576,54 +577,59 @@ function New-AuthenticatorData {
 
 Write-Host "`n=== Authenticating ===" -ForegroundColor Cyan
 
-# Determine tenant ID (not needed for Managed Identity)
+# Determine tenant ID
 if ($UseManagedIdentity) {
-    $resolvedTenantId = $null  # Managed Identity doesn't need explicit tenant
-    Write-Host "  Using Managed Identity - tenant discovery not required" -ForegroundColor Gray
+    $resolvedTenantId = $null
 } elseif ($UseKeyVault) {
-    # Use provided TenantId for Key Vault mode
     $resolvedTenantId = $TenantId
 } else {
-    # Auto-discover tenant ID from domain
     $resolvedTenantId = (Invoke-RestMethod "https://login.microsoftonline.com/$($UserUpn.Split('@')[1])/.well-known/openid-configuration").userinfo_endpoint.Split("/")[3]
 }
 
+Write-Host "  Acquiring tokens..." -ForegroundColor Gray
+
 if ($UseKeyVault) {
     # Get tokens for both Key Vault and Graph API
-    Write-Host "  Getting Key Vault token..." -ForegroundColor Gray
-    
-    $kvTokenParams = Get-TokenParameters -Scope "https://vault.azure.net/.default" `
-        -ResolvedTenantId $resolvedTenantId -ClientId $ClientId -ClientSecret $ClientSecret `
-        -ClientCertificatePath $ClientCertificatePath -ClientCertificatePassword $ClientCertificatePassword `
-        -ParameterSetName $PSCmdlet.ParameterSetName -UseManagedIdentity:$UseManagedIdentity
-    
-    $kvToken = Get-ServicePrincipalToken @kvTokenParams
-    Write-Host "  ✓ Key Vault token acquired" -ForegroundColor Green
-    
-    Write-Host "  Getting Graph API token..." -ForegroundColor Gray
     $graphTokenParams = Get-TokenParameters -Scope "https://graph.microsoft.com/.default" `
         -ResolvedTenantId $resolvedTenantId -ClientId $ClientId -ClientSecret $ClientSecret `
         -ClientCertificatePath $ClientCertificatePath -ClientCertificatePassword $ClientCertificatePassword `
         -ParameterSetName $PSCmdlet.ParameterSetName -UseManagedIdentity:$UseManagedIdentity
     
     $graphToken = Get-ServicePrincipalToken @graphTokenParams
-    Write-Host "  ✓ Graph API token acquired" -ForegroundColor Green
-} else {
-    # Get token for Graph API only (non-Key Vault mode)
-    Write-Host "  Getting Graph API token..." -ForegroundColor Gray
+    Start-Sleep -Seconds 2  # Brief delay for Azure AD replication
     
+    $kvTokenParams = Get-TokenParameters -Scope "https://vault.azure.net/.default" `
+        -ResolvedTenantId $resolvedTenantId -ClientId $ClientId -ClientSecret $ClientSecret `
+        -ClientCertificatePath $ClientCertificatePath -ClientCertificatePassword $ClientCertificatePassword `
+        -ParameterSetName $PSCmdlet.ParameterSetName -UseManagedIdentity:$UseManagedIdentity
+    
+    # Retry logic for Key Vault token
+    $maxRetries = 3
+    $retryCount = 0
+    $kvToken = $null
+    
+    while (-not $kvToken -and $retryCount -lt $maxRetries) {
+        try {
+            $kvToken = Get-ServicePrincipalToken @kvTokenParams
+        } catch {
+            $retryCount++
+            if ($_.Exception.Message -match "AADSTS7000215" -and $retryCount -lt $maxRetries) {
+                Start-Sleep -Seconds 5
+            } else {
+                throw
+            }
+        }
+    }
+    Write-Host "  ✓ Tokens acquired (Graph + Key Vault)" -ForegroundColor Green
+} else {
+    # Get token for Graph API only
     $graphTokenParams = Get-TokenParameters -Scope "https://graph.microsoft.com/.default" `
         -ResolvedTenantId $resolvedTenantId -ClientId $ClientId -ClientSecret $ClientSecret `
         -ClientCertificatePath $ClientCertificatePath -ClientCertificatePassword $ClientCertificatePassword `
         -ParameterSetName $PSCmdlet.ParameterSetName -UseManagedIdentity:$UseManagedIdentity
     
-    try {
-        $graphToken = Get-ServicePrincipalToken @graphTokenParams
-        Write-Host "  ✓ Graph API token acquired" -ForegroundColor Green
-    } catch {
-        Write-Error "Failed to acquire token: $_"
-        throw
-    }
+    $graphToken = Get-ServicePrincipalToken @graphTokenParams
+    Write-Host "  ✓ Token acquired (Graph)" -ForegroundColor Green
 }
 
 $headers = @{ "Authorization" = "Bearer $graphToken" }
@@ -635,25 +641,17 @@ try {
     $creationOptions = Invoke-RestMethod -Method GET -Uri $creationOptionsUri -Headers $headers
 } catch {
     $statusCode = $_.Exception.Response.StatusCode.value__
-    $errorMessage = if ($_.ErrorDetails.Message) { 
-        ($_.ErrorDetails.Message | ConvertFrom-Json).error.message 
-    } else { 
-        $_.Exception.Message 
-    }
-    
-    Write-Error "Failed to retrieve creation options from Graph API (HTTP $statusCode): $errorMessage"
+    $errorMessage = if ($_.ErrorDetails.Message) { ($_.ErrorDetails.Message | ConvertFrom-Json).error.message } else { $_.Exception.Message }
     
     if ($statusCode -eq 401) {
-        Write-Host "  → Check that the service principal has UserAuthenticationMethod.ReadWrite.All permission" -ForegroundColor Yellow
-        Write-Host "  → Ensure admin consent has been granted" -ForegroundColor Yellow
+        throw "Permission denied (401). Check service principal has UserAuthenticationMethod.ReadWrite.All with admin consent."
     } elseif ($statusCode -eq 403) {
-        Write-Host "  → Verify the application has the correct Graph API permissions" -ForegroundColor Yellow
-        Write-Host "  → Check that attestation enforcement is disabled in Entra ID FIDO2 settings" -ForegroundColor Yellow
+        throw "Forbidden (403). Verify Graph API permissions and attestation enforcement is disabled."
     } elseif ($statusCode -eq 404) {
-        Write-Host "  → Verify the user exists: $UserUpn" -ForegroundColor Yellow
-        Write-Host "  → Check tenant ID is correct" -ForegroundColor Yellow
+        throw "User not found (404): $UserUpn"
+    } else {
+        throw "Failed to retrieve creation options (HTTP $statusCode): $errorMessage"
     }
-    throw
 }
 
 $challenge = $creationOptions.publicKey.challenge
@@ -662,13 +660,30 @@ $userId = $creationOptions.publicKey.user.id
 $userName = $creationOptions.publicKey.user.name
 $userDisplayName = $creationOptions.publicKey.user.displayName
 
-Write-Host "  RP ID: $rpId" -ForegroundColor Gray
-Write-Host "  User: $userName ($userDisplayName)" -ForegroundColor Gray
-Write-Host "  Challenge expires: $($creationOptions.challengeTimeoutDateTime)" -ForegroundColor Gray
+Write-Host "  ✓ Challenge received for $userName" -ForegroundColor Green
 
 Write-Host "`n=== Generating key pair ===" -ForegroundColor Cyan
 
 if ($UseKeyVault) {
+    # Ensure we have a Key Vault token
+    if (-not $kvToken) {
+        Write-Host "  Key Vault token not found, acquiring..." -ForegroundColor Yellow
+        
+        $kvTokenParams = Get-TokenParameters -Scope "https://vault.azure.net/.default" `
+            -ResolvedTenantId $resolvedTenantId -ClientId $ClientId -ClientSecret $ClientSecret `
+            -ClientCertificatePath $ClientCertificatePath -ClientCertificatePassword $ClientCertificatePassword `
+            -ParameterSetName $PSCmdlet.ParameterSetName -UseManagedIdentity:$UseManagedIdentity
+        
+        try {
+            $kvToken = Get-ServicePrincipalToken @kvTokenParams
+            Write-Host "  ✓ Key Vault token acquired" -ForegroundColor Green
+        } catch {
+            Write-Error "Failed to acquire Key Vault token: $_"
+            Write-Host "  → Ensure the service principal has 'Key Vault Crypto Officer' role on the Key Vault" -ForegroundColor Yellow
+            throw
+        }
+    }
+    
     # Create key in Key Vault
     $keyName = "passkey-$($UserUpn.Split('@')[0])-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
     Write-Host "  Creating key in Key Vault: $keyName" -ForegroundColor Gray
@@ -683,7 +698,7 @@ if ($UseKeyVault) {
     $publicKeyX = ConvertFrom-Base64Url $publicKeyXB64Url
     $publicKeyY = ConvertFrom-Base64Url $publicKeyYB64Url
     
-    Write-Host "  ✓ Key created in Key Vault (private key secured in HSM)" -ForegroundColor Green
+    Write-Host "  ✓ Key created in Key Vault (private key secured in HSM for Premium SKU)" -ForegroundColor Green
     Write-Host "  Key ID: $($kvKey.key.kid)" -ForegroundColor Gray
     
     $ecDsa = $null  # No local key object when using Key Vault
@@ -721,8 +736,7 @@ $authData = New-AuthenticatorData -RpIdHash $rpIdHash -CredentialId $credentialI
 $attestationObjectBytes = New-AttestationObject -AuthData $authData
 $attestationObjectB64Url = ConvertTo-Base64Url $attestationObjectBytes
 
-Write-Host "  Authenticator data: $($authData.Length) bytes" -ForegroundColor Gray
-Write-Host "  Attestation object: $($attestationObjectBytes.Length) bytes" -ForegroundColor Gray
+Write-Host "  ✓ WebAuthn response built" -ForegroundColor Green
 
 Write-Host "`n=== Registering passkey ===" -ForegroundColor Cyan
 
@@ -780,11 +794,16 @@ if (-not $OutputPath) {
 
 # Check if file already exists and warn user
 if (Test-Path $OutputPath -PathType Leaf) {
-    Write-Warning "Output file already exists: $OutputPath"
-    $overwrite = Read-Host "Overwrite? (y/N)"
-    if ($overwrite -ne 'y' -and $overwrite -ne 'Y') {
-        Write-Host "Operation cancelled by user" -ForegroundColor Yellow
-        return
+    if ($PassThru) {
+        # Auto-overwrite in pipeline mode to avoid blocking
+        Write-Verbose "Auto-overwriting existing file in pipeline mode: $OutputPath"
+    } else {
+        Write-Warning "Output file already exists: $OutputPath"
+        $overwrite = Read-Host "Overwrite? (y/N)"
+        if ($overwrite -ne 'y' -and $overwrite -ne 'Y') {
+            Write-Host "Operation cancelled by user" -ForegroundColor Yellow
+            return
+        }
     }
 }
 
@@ -811,7 +830,7 @@ if ($UseKeyVault) {
     $credential | ConvertTo-Json -Depth 5 | Out-File -FilePath $OutputPath -Encoding UTF8
     
     Write-Host "  ✓ Credential metadata saved: $OutputPath" -ForegroundColor Green
-    Write-Host "  🔒 Private key remains in Key Vault HSM" -ForegroundColor Green
+    Write-Host "  🔒 Private key remains in Key Vault (secured in HSM for Premium SKU)" -ForegroundColor Green
 } else {
     # Save private key to file
     $pkcs8Bytes = $ecDsa.ExportPkcs8PrivateKey()
@@ -844,7 +863,7 @@ if ($UseKeyVault) {
     Write-Host "`nKey Vault Integration:" -ForegroundColor Cyan
     Write-Host "  Vault:    $KeyVaultName" -ForegroundColor White
     Write-Host "  Key Name: $keyName" -ForegroundColor White
-    Write-Host "  🔒 Private key secured in HSM" -ForegroundColor Green
+    Write-Host "  🔒 Private key in Key Vault (secured in HSM for Premium SKU)" -ForegroundColor Green
 } else {
     Write-Host "`n⚠️  Security Notice:" -ForegroundColor Yellow
     Write-Host "  Private key saved to file - protect this file carefully!" -ForegroundColor Yellow
@@ -856,6 +875,34 @@ Write-Host "  1. Test authentication with PasskeyLogin.ps1" -ForegroundColor Whi
 Write-Host "  2. Backup the credential file securely" -ForegroundColor White
 if (-not $UseKeyVault) {
     Write-Host "  3. Consider migrating to Key Vault for enhanced security" -ForegroundColor White
+}
+
+Write-Host "`n📝 Example PasskeyLogin Command:" -ForegroundColor Cyan
+if ($UseKeyVault) {
+    # Show Key Vault example (most common/important scenario)
+    Write-Host @"
+.\PasskeyLogin.ps1 ``
+    -KeyFilePath "$OutputPath" ``
+    -ClientId "$ClientId" ``
+    -ClientSecret (Read-Host -AsSecureString -Prompt "Client Secret") ``
+    -TenantId "$TenantId"
+"@ -ForegroundColor Gray
+} elseif ($ClientSecret) {
+    # Local key with authentication
+    Write-Host @"
+.\PasskeyLogin.ps1 ``
+    -KeyFilePath "$OutputPath" ``
+    -ClientId "$ClientId" ``
+    -ClientSecret (Read-Host -AsSecureString -Prompt "Client Secret") ``
+    -TenantId "$TenantId"
+"@ -ForegroundColor Gray
+} else {
+    # Local key without authentication
+    Write-Host @"
+.\PasskeyLogin.ps1 ``
+    -KeyFilePath "$OutputPath" ``
+    -TenantId "$TenantId"
+"@ -ForegroundColor Gray
 }
 
 Write-Host ""

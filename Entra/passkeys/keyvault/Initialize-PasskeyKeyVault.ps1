@@ -234,10 +234,13 @@ Write-StepHeader "Step 1: Validating Microsoft Graph Connection"
 
 try {
     $mgContext = Get-MgContext
-    if (-not $mgContext) {
-        Write-Host "Not connected to Microsoft Graph. Connecting..." -ForegroundColor Yellow
+    if (-not $mgContext -or -not $mgContext.TenantId) {
+        Write-Host "  Not connected to Microsoft Graph. Connecting..." -ForegroundColor Yellow
         Connect-MgGraph -Scopes "Application.ReadWrite.All", "AppRoleAssignment.ReadWrite.All" -NoWelcome
         $mgContext = Get-MgContext
+    }
+    if (-not $mgContext -or -not $mgContext.TenantId) {
+        throw "Microsoft Graph connection failed - no tenant context. Please authenticate when prompted."
     }
     Write-Success "Connected to Microsoft Graph"
     $tenantId = $mgContext.TenantId
@@ -257,20 +260,40 @@ if (-not $canGrantConsent) {
 # Step 2: Validate Azure connection
 Write-StepHeader "Step 2: Validating Azure Connection"
 
-try {
+$azContext = Get-AzContext
+if (-not $azContext -or -not $azContext.Account) {
+    Write-Host "  Not connected to Azure. Connecting..." -ForegroundColor Yellow
+    # Connect without specifying tenant - multi-tenant accounts often have cross-tenant
+    # subscription enumeration errors that prevent direct tenant connection.
+    # The tenant alignment check below will switch to the correct tenant if needed.
+    $prevErrorPref = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    Connect-AzAccount -WarningAction SilentlyContinue 2>$null | Out-Null
+    $ErrorActionPreference = $prevErrorPref
     $azContext = Get-AzContext
-    if (-not $azContext) {
-        Write-Host "Not connected to Azure. Connecting..." -ForegroundColor Yellow
-        Connect-AzAccount -TenantId $tenantId
-        $azContext = Get-AzContext
+    if (-not $azContext -or -not $azContext.Account) {
+        Write-Error "Failed to connect to Azure. Please run: Connect-AzAccount"
+        throw "Azure connection failed"
     }
-    Write-Success "Connected to Azure"
-    $currentSubId = $azContext.Subscription.Id
-    $currentSubName = $azContext.Subscription.Name
-    Write-Info "Subscription: $currentSubName ($currentSubId)"
-} catch {
-    Write-Error "Failed to connect to Azure. Please run: Connect-AzAccount"
-    throw
+}
+Write-Success "Connected to Azure"
+$currentSubId = $azContext.Subscription.Id
+$currentSubName = $azContext.Subscription.Name
+Write-Info "Subscription: $currentSubName ($currentSubId)"
+
+# Validate tenant alignment (before subscription logic)
+if ($azContext.Tenant.Id -ne $tenantId) {
+    Write-Host "  Azure tenant ($($azContext.Tenant.Id)) does not match Graph tenant ($tenantId)" -ForegroundColor Yellow
+    Write-Host "  Switching Azure context to match..." -ForegroundColor Yellow
+    try {
+        Set-AzContext -Tenant $tenantId | Out-Null
+        $azContext = Get-AzContext
+        $currentSubId = $azContext.Subscription.Id
+        $currentSubName = $azContext.Subscription.Name
+        Write-Success "Switched to tenant $tenantId (Subscription: $currentSubName)"
+    } catch {
+        throw "Azure context tenant ($($azContext.Tenant.Id)) does not match Microsoft Graph tenant ($tenantId) and automatic switch failed. Please run: Connect-AzAccount -TenantId $tenantId"
+    }
 }
 
 # Switch subscription if specified
@@ -283,11 +306,6 @@ if ($SubscriptionId -and $SubscriptionId -ne $currentSubId) {
     Write-Success "Switched to: $currentSubName"
 } else {
     $SubscriptionId = $currentSubId
-}
-
-# Validate tenant alignment
-if ($azContext.Tenant.Id -ne $tenantId) {
-    throw "Azure context tenant ($($azContext.Tenant.Id)) does not match Microsoft Graph tenant ($tenantId). Please connect to the same tenant."
 }
 
 # Generate and validate Key Vault name if needed
@@ -429,7 +447,7 @@ $requiredResourceAccess = @{
     )
 } | ConvertTo-Json -Depth 10
 
-Invoke-MgGraphRequest -Method PATCH -Uri "https://graph.microsoft.com/v1.0/applications/$appObjectId" -Body $requiredResourceAccess
+Invoke-MgGraphRequest -Method PATCH -Uri "https://graph.microsoft.com/v1.0/applications/$appObjectId" -Body $requiredResourceAccess | Out-Null
 Write-Success "Permission added to application"
 
 # Attempt to grant admin consent
@@ -450,7 +468,7 @@ if ($canGrantConsent) {
                 appRoleId = $permission.id
             } | ConvertTo-Json
             
-            Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/servicePrincipals/$spObjectId/appRoleAssignments" -Body $consentBody
+            Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/servicePrincipals/$spObjectId/appRoleAssignments" -Body $consentBody | Out-Null
             Write-Success "Admin consent granted automatically"
         }
     } catch {
@@ -555,11 +573,31 @@ try {
         Write-Info "Soft Delete: Enabled (90 days)"
         Write-Info "Purge Protection: $(if ($EnablePurgeProtection) {'Enabled'} else {'Disabled'})"
         
-        # Wait for Key Vault to be fully provisioned
-        Write-Host "  Waiting for Key Vault provisioning (10 seconds)..." -ForegroundColor Gray
-        for ($i = 0; $i -lt 10; $i++) {
-            Start-Sleep -Seconds 1
+        # Wait for Key Vault to be fully provisioned by checking accessibility
+        Write-Host "  Waiting for Key Vault to be accessible..." -ForegroundColor Gray
+        $maxAttempts = 12
+        $attempt = 0
+        $kvReady = $false
+        
+        while (-not $kvReady -and $attempt -lt $maxAttempts) {
+            $attempt++
+            Start-Sleep -Seconds 5
             Write-Host "." -NoNewline -ForegroundColor Gray
+            
+            try {
+                # Try to get Key Vault properties to verify it's accessible
+                $kvCheck = Invoke-AzRestMethod -Method GET -Path "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.KeyVault/vaults/$($KeyVaultName)?api-version=2023-02-01"
+                if ($kvCheck.StatusCode -eq 200) {
+                    $kvReady = $true
+                    Write-Host " ✓" -ForegroundColor Green
+                }
+            } catch {
+                # Key Vault not ready yet, will retry
+            }
+        }
+        
+        if (-not $kvReady) {
+            Write-Warning "Key Vault may not be fully ready, but continuing..."
         }
         Write-Host ""
     } catch {
@@ -622,9 +660,46 @@ if ($existingRole) {
         Write-Info "Role: Key Vault Crypto Officer"
         Write-Info "Scope: $KeyVaultName"
         
-        # Wait for role assignment propagation
-        Write-Host "  Waiting for role assignment propagation..." -ForegroundColor Gray
-        Start-Sleep -Seconds 5
+        # Wait for role assignment propagation by checking if it's visible
+        Write-Host "  Waiting for role assignment to propagate..." -ForegroundColor Gray
+        $maxAttempts = 60
+        $attempt = 0
+        $roleReady = $false
+        
+        while (-not $roleReady -and $attempt -lt $maxAttempts) {
+            $attempt++
+            Start-Sleep -Seconds 5
+            Write-Host "." -NoNewline -ForegroundColor Gray
+            
+            try {
+                # Check if role assignment is visible (same approach as the creation check)
+                $kvScope = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.KeyVault/vaults/$KeyVaultName"
+                $roleCheckUri = "https://management.azure.com$kvScope/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01"
+                $roleCheck = Invoke-AzRestMethod -Method GET -Uri $roleCheckUri
+                
+                if ($roleCheck.StatusCode -eq 200) {
+                    $roleAssignments = ($roleCheck.Content | ConvertFrom-Json).value
+                    # Check for the specific role assignment we just created
+                    $cryptoOfficerRole = $roleAssignments | Where-Object { 
+                        $_.properties.principalId -eq $spObjectId -and 
+                        $_.properties.roleDefinitionId -eq $roleDefId 
+                    }
+                    
+                    if ($cryptoOfficerRole) {
+                        $roleReady = $true
+                        Write-Host " ✓" -ForegroundColor Green
+                    }
+                }
+            } catch {
+                # Role not visible yet, will retry
+                Write-Verbose "Role check attempt $attempt failed: $($_.Exception.Message)"
+            }
+        }
+        
+        if (-not $roleReady) {
+            Write-Warning "Role assignment may not be fully propagated, but continuing..."
+        }
+        Write-Host ""
     } catch {
         Write-Error "Failed to assign role: $($_.Exception.Message)"
         Write-Warning "You may need to assign the 'Key Vault Crypto Officer' role manually via Azure Portal"
@@ -653,21 +728,102 @@ $secretBody = @{
 } | ConvertTo-Json -Depth 10
 
 $secretResult = Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/applications/$appObjectId/addPassword" -Body $secretBody
+
+# Debug: Show what properties are available
+Write-Verbose "Secret result properties: $($secretResult.PSObject.Properties.Name -join ', ')"
+Write-Verbose "Secret ID (keyId): $($secretResult.keyId)"
+Write-Verbose "Secret value length: $($secretResult.secretText.Length) chars"
+
 $clientSecret = $secretResult.secretText
 
-Write-Success "Client secret created"
-Write-Info "Expires: $endDate"
-
-# Warn if expiration is short
-if ($SecretExpirationMonths -lt 6) {
-    Write-Warning "Secret expires in $SecretExpirationMonths months - consider longer expiration for production"
+# Validate we got the secret text, not the ID
+if ([string]::IsNullOrEmpty($clientSecret)) {
+    Write-Error "Failed to retrieve client secret text from API response"
+    throw "Secret text  was null or empty. Available properties: $($secretResult.PSObject.Properties.Name -join ', ')"
 }
 
-Write-Host "`n  ⚠️  SAVE THIS SECRET - It won't be shown again!" -ForegroundColor Yellow
+if ($clientSecret -match '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$') {
+    Write-Error "Client secret appears to be a GUID (secret ID) instead of the secret value!"
+    Write-Error "This usually means the API response structure is different than expected."
+    throw "Retrieved secret ID instead of secret value"
+}
 
-# Wait for secret replication (Azure AD needs time to replicate the secret globally)
-Write-Host "  Waiting for secret replication (20 seconds)..." -ForegroundColor Gray
-Start-Sleep -Seconds 20
+Write-Success "Client secret created (expires: $endDate)"
+if ($SecretExpirationMonths -lt 6) {
+    Write-Warning "Secret expires in less than 6 months"
+}
+Write-Host "  ⚠️  SAVE THIS SECRET - It won't be shown again!" -ForegroundColor Yellow
+Write-Host "  Validating service principal..." -ForegroundColor Gray
+$maxAttempts = 12  # 60 seconds total (secrets usually replicate quickly)
+$attempt = 0
+$spReady = $false
+
+while (-not $spReady -and $attempt -lt $maxAttempts) {
+    $attempt++
+    Start-Sleep -Seconds 5
+    Write-Host "." -NoNewline -ForegroundColor Gray
+    
+    try {
+        $tokenBody = @{
+            grant_type    = "client_credentials"
+            client_id     = $appId
+            client_secret = $clientSecret
+            scope         = "https://graph.microsoft.com/.default"
+        }
+        
+        $tokenResponse = Invoke-RestMethod -Uri "https://login.microsoftonline.com/$tenantId/oauth2/v2.0/token" -Method POST -Body $tokenBody -ContentType "application/x-www-form-urlencoded" -ErrorAction Stop
+        
+        if ($tokenResponse.access_token) {
+            $spReady = $true
+            Write-Host " ✓" -ForegroundColor Green
+        }
+    } catch {
+        # Service principal not ready yet, will retry
+    }
+}
+
+if (-not $spReady) {
+    Write-Warning "Could not verify service principal. May resolve in a few minutes."
+    Write-Warning "Continuing anyway..."
+}
+
+# If using Key Vault, verify secret works for Key Vault scope
+if ($spReady -and -not $SkipKeyVault) {
+    Write-Host "`n  Verifying Key Vault access..." -ForegroundColor Gray
+    $maxAttempts = 12
+    $attempt = 0
+    $kvReady = $false
+
+    while (-not $kvReady -and $attempt -lt $maxAttempts) {
+        $attempt++
+        Start-Sleep -Seconds 5
+        Write-Host "." -NoNewline -ForegroundColor Gray
+        
+        try {
+            $kvTokenBody = @{
+                grant_type    = "client_credentials"
+                client_id     = $appId
+                client_secret = $clientSecret
+                scope         = "https://vault.azure.net/.default"
+            }
+            
+            $kvResponse = Invoke-RestMethod -Uri "https://login.microsoftonline.com/$tenantId/oauth2/v2.0/token" -Method POST -Body $kvTokenBody -ContentType "application/x-www-form-urlencoded" -ErrorAction Stop
+            
+            if ($kvResponse.access_token) {
+                $kvReady = $true
+                Write-Host " ✓" -ForegroundColor Green
+            }
+        } catch {
+            # Not ready yet, will retry
+        }
+    }
+    
+    if (-not $kvReady) {
+        Write-Host "" # New line
+        Write-Warning "Key Vault validation timed out - may need more time to propagate."
+    }
+}
+Write-Host ""
 } elseif (-not $SkipServicePrincipal -and $SkipSecret) {
     Write-Info "⊗ Skipping client secret generation (SkipSecret specified)"
     $clientSecret = "<Secret creation skipped>"
@@ -682,52 +838,40 @@ if ($SkipServicePrincipal -or $SkipSecret -or $SkipKeyVault) {
 }
 Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Green
 
-Write-Host "`n📋 Configuration Summary:" -ForegroundColor Cyan
-Write-Host "  Tenant ID           $tenantId" -ForegroundColor White
+Write-Host "`n📋 Summary:" -ForegroundColor Cyan
+Write-Host "  Tenant:      $tenantId" -ForegroundColor White
 if (-not $SkipKeyVault) {
-    Write-Host "  Subscription        $currentSubName" -ForegroundColor White
-    Write-Host "  Resource Group      $ResourceGroupName" -ForegroundColor White
-    Write-Host "  Key Vault           $KeyVaultName" -ForegroundColor White
-    Write-Host "  SKU                 $(if ($KeyVaultSku -eq 'premium') { 'Premium (HSM)' } else { 'Standard' })" -ForegroundColor White
-    Write-Host "  Location            $Location" -ForegroundColor White
+    Write-Host "  Subscription: $currentSubName" -ForegroundColor White
+    Write-Host "  Key Vault:    $KeyVaultName ($KeyVaultSku, $Location)" -ForegroundColor White
 }
 if (-not $SkipServicePrincipal) {
-    Write-Host "  Service Principal   $ServicePrincipalName" -ForegroundColor White
-    Write-Host "  App ID              $appId" -ForegroundColor White
+    Write-Host "  App Name:     $ServicePrincipalName" -ForegroundColor White
+    Write-Host "  App ID:       $appId" -ForegroundColor White
 }
 
 if (-not $SkipServicePrincipal -and -not $SkipSecret) {
-    Write-Host "`n🔑 Authentication Credentials:" -ForegroundColor Cyan
-    Write-Host "  Client Secret      $clientSecret" -ForegroundColor White
-    Write-Host "  Expires            $endDate" -ForegroundColor White
-    
-    Write-Host "`n  ⚠️  CRITICAL: Save the client secret immediately!" -ForegroundColor Yellow
-    Write-Host "     This is the only time it will be displayed." -ForegroundColor Yellow
+    Write-Host "`n🔑 Client Secret:   $clientSecret" -ForegroundColor Yellow
+    Write-Host "   Expires:         $endDate" -ForegroundColor White
+    Write-Host "   ⚠️  Save this now - won't be shown again!" -ForegroundColor Yellow
 } elseif (-not $SkipServicePrincipal -and $SkipSecret) {
-    Write-Host "`n🔑 Authentication:" -ForegroundColor Cyan
-    Write-Host "  ⊗ Client secret not generated (use certificate or managed identity)" -ForegroundColor Yellow
+    Write-Host "`n🔑 Authentication:  Certificate or Managed Identity" -ForegroundColor White
 }
 
 if (-not $SkipKeyVault) {
-    Write-Host "`n🛡️  Security Features Enabled:" -ForegroundColor Cyan
-    Write-Host "  ✓ RBAC authorization (least privilege)" -ForegroundColor Green
-    Write-Host "  ✓ Soft delete with 90-day retention" -ForegroundColor Green
+    Write-Host "`n🛡️  Security: RBAC, Soft-delete (90d)" -NoNewline -ForegroundColor Green
     if ($EnablePurgeProtection) {
-        Write-Host "  ✓ Purge protection (prevents permanent deletion)" -ForegroundColor Green
+        Write-Host ", Purge protection" -ForegroundColor Green
     } else {
-        Write-Host "  ⚠  Purge protection disabled (not recommended)" -ForegroundColor Yellow
+        Write-Host " (no purge protection)" -ForegroundColor Yellow
     }
     if ($KeyVaultSku -eq "premium") {
-        Write-Host "  ✓ Premium SKU (HSM-backed keys)" -ForegroundColor Green
+        Write-Host "           Using HSM-backed keys (Premium SKU)" -ForegroundColor Green
     }
 }
 
-Write-Host "`n📖 Next Steps:" -ForegroundColor Cyan
+Write-Host "`n📖 Next: Register passkeys with New-KeyVaultPasskey.ps1" -ForegroundColor Cyan
 if (-not $SkipServicePrincipal -and -not $SkipSecret -and -not $SkipKeyVault) {
-    Write-Host "  1. Save the client secret in a secure location (password manager)" -ForegroundColor White
-    Write-Host "  2. Register passkeys using New-KeyVaultPasskey.ps1" -ForegroundColor White
-    
-    Write-Host "`n📝 Example Command:" -ForegroundColor Cyan
+    Write-Host "`n📝 Example:" -ForegroundColor Cyan
     Write-Host @"
 .\New-KeyVaultPasskey.ps1 ``
     -UserUpn "user@yourdomain.com" ``
@@ -739,17 +883,11 @@ if (-not $SkipServicePrincipal -and -not $SkipSecret -and -not $SkipKeyVault) {
     -TenantId "$tenantId"
 "@ -ForegroundColor Gray
 } elseif ($SkipServicePrincipal) {
-    Write-Host "  Service principal was not created" -ForegroundColor White
-    Write-Host "  Use existing service principal or managed identity for authentication" -ForegroundColor White
+    Write-Host "  Use existing service principal or managed identity" -ForegroundColor White
 } elseif ($SkipKeyVault) {
-    Write-Host "  Key Vault was not created" -ForegroundColor White
-    Write-Host "  Service principal created: $ServicePrincipalName" -ForegroundColor White
-    if (-not $SkipSecret) {
-        Write-Host "  Use the client secret above for authentication" -ForegroundColor White
-    }
+    Write-Host "  Service principal: $ServicePrincipalName" -ForegroundColor White
 } elseif ($SkipSecret) {
-    Write-Host "  Client secret was not generated" -ForegroundColor White
-    Write-Host "  Configure certificate-based authentication or use managed identity" -ForegroundColor White
+    Write-Host "  Configure certificate or managed identity auth" -ForegroundColor White
 }
 
 $statusMsg = if ($canGrantConsent) {"Ready to register passkeys!"} else {"Complete admin consent to continue."}
@@ -769,9 +907,9 @@ if ($PassThru) {
         Location              = if (-not $SkipKeyVault) { $Location } else { $null }
         ServicePrincipalName  = if (-not $SkipServicePrincipal) { $ServicePrincipalName } else { $null }
         ApplicationId         = if (-not $SkipServicePrincipal) { $appId } else { $null }
-        ServicePrincipalId    = if (-not $SkipServicePrincipal) { $servicePrincipal.Id } else { $null }
+        ServicePrincipalId    = if (-not $SkipServicePrincipal) { $spObjectId } else { $null }
         ClientSecret          = if (-not $SkipServicePrincipal -and -not $SkipSecret) { $clientSecret } else { $null }
-        SecretExpiration      = if (-not $SkipServicePrincipal -and -not $SkipSecret) { $secretExpiration } else { $null }
+        SecretExpiration      = if (-not $SkipServicePrincipal -and -not $SkipSecret) { $endDate } else { $null }
         UseKeyVault           = -not $SkipKeyVault
         ConsentGranted        = $canGrantConsent
     }

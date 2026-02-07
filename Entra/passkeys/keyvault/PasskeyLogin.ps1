@@ -291,56 +291,6 @@ function Get-KeyVaultToken {
     }
 }
 
-function Invoke-KeyVaultSign {
-    param(
-        [string]$KeyVaultName,
-        [string]$KeyName,
-        [byte[]]$DataToSign,
-        [string]$AccessToken
-    )
-    
-    # Key Vault ES256 requires SHA-256 hash of the data (32 bytes)
-    $hash = [System.Security.Cryptography.SHA256]::HashData($DataToSign)
-    $dataBase64Url = ConvertTo-Base64Url -Bytes $hash
-    
-    $signUri = "https://$KeyVaultName.vault.azure.net/keys/$KeyName/sign?api-version=7.4"
-    $headers = @{
-        "Authorization" = "Bearer $AccessToken"
-        "Content-Type"  = "application/json"
-    }
-    $body = @{
-        alg   = "ES256"
-        value = $dataBase64Url
-    } | ConvertTo-Json
-    
-    try {
-        $result = Invoke-RestMethod -Uri $signUri -Method POST -Headers $headers -Body $body
-        
-        # Convert base64url signature back to bytes (IEEE P1363 format)
-        $ieeeSignature = ConvertFrom-Base64Url -Base64Url $result.value
-        Write-Verbose "Key Vault signature length (IEEE): $($ieeeSignature.Length) bytes"
-        
-        # Convert to DER format to match local signing
-        $derSignature = ConvertFrom-IeeeToDer -IeeeSignature $ieeeSignature
-        Write-Verbose "Converted signature length (DER): $($derSignature.Length) bytes"
-        return $derSignature
-    } catch {
-        $statusCode = $_.Exception.Response.StatusCode.value__
-        $errorMessage = if ($_.ErrorDetails.Message) { $_.ErrorDetails.Message } else { $_.Exception.Message }
-        
-        Write-Error "Failed to sign with Key Vault (HTTP $statusCode): $errorMessage"
-        
-        if ($statusCode -eq 401) {
-            Write-Host "  → Check Key Vault token is valid" -ForegroundColor Yellow
-        } elseif ($statusCode -eq 403) {
-            Write-Host "  → Check service principal has 'Key Vault Crypto User' or 'Key Vault Crypto Officer' role" -ForegroundColor Yellow
-        } elseif ($statusCode -eq 404) {
-            Write-Host "  → Verify Key Vault name '$KeyVaultName' and key name '$KeyName'" -ForegroundColor Yellow
-        }
-        throw
-    }
-}
-
 function ConvertTo-PEMPrivateKey {
     param (
         [Parameter(Mandatory)]
@@ -427,26 +377,102 @@ function New-FidoSignature {
 
     # 2. Sign (AuthData + ClientDataHash)
     $dataToSign = $AuthDataBytes + $clientHash
+    Write-Verbose "AuthData length: $($AuthDataBytes.Length) bytes"
+    Write-Verbose "ClientHash length: $($clientHash.Length) bytes"
+    Write-Verbose "Combined data to sign length: $($dataToSign.Length) bytes"
 
     # 3. Generate Signature (Key Vault or Local)
+    # CRITICAL: Both must sign the SAME data in the SAME way
+    # - Key Vault: We hash the data, send hash, KV signs the hash
+    # - Local: We hash the data, then sign the hash (matching Key Vault)
+    
+    # Pre-hash the data for consistent signing
+    $dataHash = [System.Security.Cryptography.SHA256]::HashData($dataToSign)
+    Write-Verbose "Pre-computed hash length: $($dataHash.Length) bytes"
+    
     if ($KeyVaultInfo -and $KeyVaultToken) {
         Write-Host "    🔒 Signing with Azure Key Vault" -ForegroundColor Cyan
-        $sigBytes = Invoke-KeyVaultSign `
-            -KeyVaultName $KeyVaultInfo.vaultName `
-            -KeyName $KeyVaultInfo.keyName `
-            -DataToSign $dataToSign `
-            -AccessToken $KeyVaultToken
+        
+        # Key Vault expects base64url encoded hash
+        $dataBase64Url = ConvertTo-Base64Url -Bytes $dataHash
+        $signUri = "https://$($KeyVaultInfo.vaultName).vault.azure.net/keys/$($KeyVaultInfo.keyName)/sign?api-version=7.4"
+        $headers = @{
+            "Authorization" = "Bearer $KeyVaultToken"
+            "Content-Type"  = "application/json"
+        }
+        $body = @{
+            alg   = "ES256"
+            value = $dataBase64Url
+        } | ConvertTo-Json
+        
+        # Retry logic for Key Vault signing (network issues, throttling, etc.)
+        $maxRetries = 3
+        $retryDelay = 1000  # Start with 1 second
+        $sigBytes = $null
+        
+        for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+            try {
+                Write-Verbose "Key Vault sign attempt $attempt of $maxRetries..."
+                $result = Invoke-RestMethod -Uri $signUri -Method POST -Headers $headers -Body $body -ErrorAction Stop
+                
+                # Validate response
+                if (-not $result.value) {
+                    throw "Key Vault returned empty signature"
+                }
+                
+                # Convert base64url signature back to bytes (IEEE P1363 format)
+                $ieeeSignature = ConvertFrom-Base64Url -Base64Url $result.value
+                Write-Verbose "Key Vault signature length (IEEE): $($ieeeSignature.Length) bytes"
+                
+                # Validate signature length (ES256 should be 64 bytes in IEEE format)
+                if ($ieeeSignature.Length -ne 64) {
+                    Write-Warning "Unexpected IEEE signature length: $($ieeeSignature.Length) bytes (expected 64)"
+                }
+                
+                # Convert to DER format to match local signing
+                $sigBytes = ConvertFrom-IeeeToDer -IeeeSignature $ieeeSignature
+                Write-Verbose "Converted signature length (DER): $($sigBytes.Length) bytes"
+                
+                # Success - break retry loop
+                Write-Verbose "Key Vault signing succeeded on attempt $attempt"
+                break
+                
+            } catch {
+                $errorMsg = $_.Exception.Message
+                Write-Warning "Key Vault sign attempt $attempt failed: $errorMsg"
+                
+                if ($attempt -lt $maxRetries) {
+                    Write-Verbose "Retrying in $($retryDelay)ms..."
+                    Start-Sleep -Milliseconds $retryDelay
+                    $retryDelay *= 2  # Exponential backoff
+                } else {
+                    Write-Error "Key Vault signing failed after $maxRetries attempts: $errorMsg"
+                    throw
+                }
+            }
+        }
+        
+        if (-not $sigBytes) {
+            throw "Key Vault signing failed: No signature generated"
+        }
+        
         Write-Host "    📊 Signature length (DER): $($sigBytes.Length) bytes" -ForegroundColor Gray
     } else {
         Write-Host "    🔑 Signing with local private key" -ForegroundColor Cyan
+        
+        # Sign the pre-computed hash (matching Key Vault behavior)
         $ecdsa = [System.Security.Cryptography.ECDsa]::Create()
         $ecdsa.ImportFromPem($PrivateKeyPem)
-        $sigBytes = $ecdsa.SignData(
-            $dataToSign, 
-            [System.Security.Cryptography.HashAlgorithmName]::SHA256, 
+        
+        # Sign the hash directly without additional hashing
+        $sigBytes = $ecdsa.SignHash(
+            $dataHash,
             [System.Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence
         )
+        Write-Verbose "Local signature length (DER): $($sigBytes.Length) bytes"
         $ecdsa.Dispose()
+        
+        Write-Host "    📊 Signature length (DER): $($sigBytes.Length) bytes" -ForegroundColor Gray
     }
 
     return @{
@@ -483,6 +509,18 @@ if ($CredentialFromPipeline) {
     if (-not $KeyVaultTenantId -and $CredentialFromPipeline.TenantId) {
         $KeyVaultTenantId = $CredentialFromPipeline.TenantId
     }
+
+    # Wait for Entra ID passkey propagation if the passkey was just registered
+    if ($CredentialFromPipeline.RegistrationTime) {
+        $PropagationDelay = 30 # seconds
+        $elapsed = ((Get-Date) - [datetime]$CredentialFromPipeline.RegistrationTime).TotalSeconds
+        if ($elapsed -lt $PropagationDelay) {
+            $waitTime = [math]::Ceiling($PropagationDelay - $elapsed)
+            Write-Host "`n⏳ Waiting $waitTime seconds for Entra ID passkey propagation..." -ForegroundColor Yellow
+            Start-Sleep -Seconds $waitTime
+            Write-Host "  ✓ Propagation wait complete`n" -ForegroundColor Green
+        }
+    }
 }
 
 # Validate required parameters
@@ -500,7 +538,7 @@ if ($KeyFilePath) {
         throw "Key file does not exist"
     }
 
-    Write-Host "$([char]0x2718) Loading key data from file: $KeyFilePath" -ForegroundColor Cyan
+    Write-Host "📂 Loading key data from file: $KeyFilePath" -ForegroundColor Cyan
     try {
         $keyData = Get-Content $KeyFilePath -Raw | ConvertFrom-Json
     } catch {
@@ -592,7 +630,7 @@ if ($kvInfo) {
     if ($kvInfo.keyId) {
         Write-Host "  Key ID:          $($kvInfo.keyId)" -ForegroundColor Gray
     }
-    Write-Host "  🔒 Private key secured in Azure Key Vault HSM" -ForegroundColor Green
+    Write-Host "  🔒 Private key secured in Azure Key Vault (in HSM for Premium SKU)" -ForegroundColor Green
     $useKeyVault = $true
     
     # Get Key Vault authentication
@@ -804,25 +842,64 @@ $Payload = @{
 }
 
 Write-Host "  Submitting FIDO2 assertion..." -ForegroundColor Gray
+Write-Verbose "Assertion payload: $($fidoPayload | ConvertTo-Json -Compress)"
+Write-Verbose "Login URI: $LoginUri"
+
 $respFinalize = Invoke-WebRequest -UseBasicParsing -Uri $LoginUri -Method Post -Body $Payload -WebSession $session -MaximumRedirection 0 -SkipHttpErrorCheck
+
+Write-Verbose "Initial response status: $($respFinalize.StatusCode)"
+if ($respFinalize.StatusCode -ge 400) {
+    Write-Warning "Assertion submission returned HTTP $($respFinalize.StatusCode)"
+    Write-Verbose "Response content: $($respFinalize.Content)"
+}
+
+# Key Vault signatures may need processing time
+if ($useKeyVault) {
+    Write-Verbose "Key Vault flow: allowing processing time"
+    Start-Sleep -Milliseconds 500
+}
 
 # Submit with sso_reload
 $LoginUri = "https://login.microsoftonline.com/common/login?sso_reload=true"
 $Payload.flowToken = $SessionInformation.oGetCredTypeResult.FlowToken
 
 Write-Host "  Submitting with SSO reload..." -ForegroundColor Gray
+Write-Verbose "SSO reload URI: $LoginUri"
+
 $respFinalize = Invoke-WebRequest -UseBasicParsing -Uri $LoginUri -Method Post -Body $Payload -WebSession $session -MaximumRedirection 0 -SkipHttpErrorCheck
 
-$respFinalize.Content -match '{(.*)}' | Out-Null
-$Debug = $Matches[0] | ConvertFrom-Json
-if ($Debug.pgid) {
-    Write-Verbose "PageID: $($Debug.pgid)"
-    $CurrentPageId = $Debug.pgid
+Write-Verbose "SSO reload response status: $($respFinalize.StatusCode)"
+if ($respFinalize.StatusCode -ge 400) {
+    Write-Warning "SSO reload returned HTTP $($respFinalize.StatusCode)"
+    Write-Verbose "Response content: $($respFinalize.Content)"
+}
+
+# Key Vault signatures may need processing time before parsing
+if ($useKeyVault) {
+    Write-Verbose "Key Vault flow: allowing processing time before parsing"
+    Start-Sleep -Milliseconds 500
+}
+
+# Parse response with validation
+if (-not ($respFinalize.Content -match '{(.*)}')) {
+    Write-Verbose "No JSON response received from server. Login may have completed."
+    $Debug = @{ pgid = $null }
+} else {
+    try {
+        $Debug = $Matches[0] | ConvertFrom-Json
+        if ($Debug.pgid) {
+            Write-Verbose "PageID: $($Debug.pgid)"
+            $CurrentPageId = $Debug.pgid
+        }
+    } catch {
+        Write-Verbose "Failed to parse response JSON: $($_.Exception.Message)"
+        $Debug = @{ pgid = $null }
+    }
 }
 
 # Handle interrupts (CMSI, KMSI, etc.)
-Write-Host "  Processing authentication interrupts..." -ForegroundColor Gray
 $LoopCount = 0
+$authenticationFailed = $false
 $InterruptHandlers = @{
     "CmsiInterrupt" = @{
         Message = "Handling consent prompt"
@@ -861,7 +938,16 @@ $InterruptHandlers = @{
 
 while ($Debug.pgid -in $InterruptHandlers.Keys) {
     if ($CurrentPageId -eq $LastPageId -or ++$LoopCount -gt 10) {
-        Write-Warning "$(if ($CurrentPageId -eq $LastPageId) { 'Stuck in' } else { 'Exceeded maximum' }) interrupt loop. Exiting."
+        $authenticationFailed = $true
+        Write-Error "$(if ($CurrentPageId -eq $LastPageId) { 'Stuck in' } else { 'Exceeded maximum' }) interrupt loop. Authentication failed."
+        Write-Verbose "LastPageId: $LastPageId, CurrentPageId: $CurrentPageId, LoopCount: $LoopCount"
+        if ($useKeyVault) {
+            Write-Host "`n⚠️  Key Vault Signature Issue Detected" -ForegroundColor Yellow
+            Write-Host "  This may indicate:" -ForegroundColor Yellow
+            Write-Host "    • Invalid or malformed signature from Key Vault" -ForegroundColor Yellow
+            Write-Host "    • Key Vault permission or access issues" -ForegroundColor Yellow
+            Write-Host "    • Network latency affecting signature validation" -ForegroundColor Yellow
+        }
         break
     }
     $LastPageId = $CurrentPageId
@@ -887,33 +973,75 @@ while ($Debug.pgid -in $InterruptHandlers.Keys) {
     }
     
     $respFinalize = Invoke-WebRequest @params
+    
+    # Allow server processing time after handling interrupt
+    Start-Sleep -Milliseconds 300
 
-    if (-not ($respFinalize.Content -match '{(.*)}')) { break }
+    if (-not ($respFinalize.Content -match '{(.*)}')) {
+        Write-Verbose "No JSON response from interrupt handler. Assuming completion."
+        break
+    }
     
     try {
         $Debug = $Matches[0] | ConvertFrom-Json
         if ($Debug.pgid) {
             Write-Verbose "PageID: $($Debug.pgid)"
             $CurrentPageId = $Debug.pgid
+        } else {
+            # No page ID means we're likely done with interrupts
+            Write-Verbose "No page ID in response. Exiting interrupt loop."
+            break
         }
     } catch {
         Write-Warning "Failed to parse JSON response. Exiting loop."
+        Write-Verbose "Parse error: $($_.Exception.Message)"
         break
     }
 }
 
 Write-Host "  ✓ Authentication flow completed" -ForegroundColor Green
 
+# Check if authentication failed during interrupt handling
+if ($authenticationFailed) {
+    Write-Host "`n╭────────────────────────────────────────────────────────────╮" -ForegroundColor Red
+    Write-Host "│                  ✗ Authentication Failed!                     │" -ForegroundColor Red
+    Write-Host "╰────────────────────────────────────────────────────────────╯" -ForegroundColor Red
+    Write-Host "`nPossible causes:" -ForegroundColor Yellow
+    Write-Host "  • Invalid or malformed FIDO2 signature" -ForegroundColor Yellow
+    if ($useKeyVault) {
+        Write-Host "  • Key Vault signing issue or permission problem" -ForegroundColor Yellow
+        Write-Host "  • Network latency affecting Key Vault operation" -ForegroundColor Yellow
+        Write-Host "  • Key Vault service propagation delay (permissions, keys)" -ForegroundColor Yellow
+        Write-Host "`nRecommended action:" -ForegroundColor Cyan
+        Write-Host "  1. Wait 30-60 seconds for Azure AD/Key Vault propagation" -ForegroundColor White
+        Write-Host "  2. Verify Key Vault permissions: Crypto User or Sign permission" -ForegroundColor White
+        Write-Host "  3. Re-run authentication command" -ForegroundColor White
+    } else {
+        Write-Host "  • Credential ID mismatch or expired passkey" -ForegroundColor Yellow
+        Write-Host "  • Server-side authentication validation failure" -ForegroundColor Yellow
+    }
+    throw "Authentication failed: stuck in interrupt loop during FIDO2 validation"
+}
+
+# Key Vault flow may need time for final cookie propagation
+if ($useKeyVault) {
+    Write-Verbose "Key Vault flow: allowing cookie propagation time"
+    Start-Sleep -Milliseconds 500
+}
+
 # Check success
 Write-Host "`n=== Verifying Authentication Result ===" -ForegroundColor Cyan
-if ($session.Cookies.GetCookies("https://login.microsoftonline.com") | Where-Object Name -Like "ESTS*") {
+$allCookies = $session.Cookies.GetCookies("https://login.microsoftonline.com")
+Write-Verbose "Checking cookies: $($allCookies.Name -join ', ')"
+
+if ($allCookies | Where-Object Name -Like "ESTS*") {
     Write-Host "`n╭────────────────────────────────────────────────────────────╮" -ForegroundColor Green
     Write-Host "│                  ✓ Authentication Successful!                 │" -ForegroundColor Green
     Write-Host "╰────────────────────────────────────────────────────────────╯" -ForegroundColor Green
     
-    $ESTSAUTH = $session.Cookies.GetCookies("https://login.microsoftonline.com") | Where-Object Name -EQ "ESTSAUTH"
-    $ESTSAUTHPERSISTENT = $session.Cookies.GetCookies("https://login.microsoftonline.com") | Where-Object Name -EQ "ESTSAUTHPERSISTENT"
-    $ESTSAUTHLIGHT = $session.Cookies.GetCookies("https://login.microsoftonline.com") | Where-Object Name -EQ "ESTSAUTHLIGHT"
+    $ESTSAUTH = $allCookies | Where-Object Name -EQ "ESTSAUTH"
+    $ESTSAUTHPERSISTENT = $allCookies | Where-Object Name -EQ "ESTSAUTHPERSISTENT"
+    $ESTSAUTHLIGHT = $allCookies | Where-Object Name -EQ "ESTSAUTHLIGHT"
     
     $ests = @($ESTSAUTH, $ESTSAUTHPERSISTENT, $ESTSAUTHLIGHT) | Sort-Object { $_.Value.Length } -Descending | Select-Object -First 1
     
