@@ -195,6 +195,11 @@ function ConvertTo-Base64Url {
     return [Convert]::ToBase64String($Bytes).Replace('+', '-').Replace('/', '_').TrimEnd('=')
 }
 
+function Confirm-Base64Url {
+    param([string]$Value)
+    return $Value.TrimEnd('=') -replace '\+','-' -replace '/','_'
+}
+
 function ConvertFrom-Base64Url {
     param([string]$Base64Url)
     $base64 = $Base64Url.Replace('-', '+').Replace('_', '/')
@@ -578,6 +583,7 @@ if (-not $userHandle) {
     Write-Error "UserHandle not found in JSON file or command line arguments"
     throw "Missing required parameter: UserHandle"
 }
+$userHandle = Confirm-Base64Url $userHandle
 
 $credentialId = $keyData.credentialId ?? $CredentialId
 if (-not $credentialId) {
@@ -585,8 +591,8 @@ if (-not $credentialId) {
     throw "Missing required parameter: CredentialId"
 }
 
-# Convert UUID format to base64url if necessary
-$credentialId = ConvertFrom-UuidToBase64Url -Uuid $credentialId
+# Convert UUID format to base64url if necessary, then normalize
+$credentialId = Confirm-Base64Url (ConvertFrom-UuidToBase64Url -Uuid $credentialId)
 
 Write-Host "`n=== Authentication Configuration ===" -ForegroundColor Cyan
 Write-Host "  User:            $targetUser" -ForegroundColor White

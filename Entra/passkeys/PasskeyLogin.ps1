@@ -110,6 +110,11 @@ function ConvertTo-Base64Url {
     return [Convert]::ToBase64String($Bytes).Replace('+', '-').Replace('/', '_').TrimEnd('=')
 }
 
+function Confirm-Base64Url {
+    param([string]$Value)
+    return $Value.TrimEnd('=') -replace '\+','-' -replace '/','_'
+}
+
 function ConvertTo-PEMPrivateKey {
     param (
         [Parameter(Mandatory)]
@@ -261,6 +266,7 @@ if (-not $userHandle) {
     Write-Error "UserHandle not found in JSON or arguments."
     exit 1
 }
+$userHandle = Confirm-Base64Url $userHandle
 
 $credentialId = $keyData.credentialId ?? $CredentialId
 if (-not $credentialId) {
@@ -278,6 +284,8 @@ if ($credentialId -match '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
     }
     $base64 = [Convert]::ToBase64String($rawBytes)
     $credentialId = $base64.Replace('+', '-').Replace('/', '_').TrimEnd('=')
+} else {
+    $credentialId = Confirm-Base64Url $credentialId
 }
 
 Write-Host "$([char]0x2714) User:       $targetUser" -ForegroundColor Gray
@@ -415,6 +423,9 @@ $Payload = @{
 Write-Host "$([char]0x2718) Submitting FIDO2 assertion to microsoftonline.com..." -ForegroundColor Cyan
 $respFinalize = Invoke-WebRequest -UseBasicParsing -Uri $LoginUri -Method Post -Body $Payload -WebSession $session -MaximumRedirection 0 -SkipHttpErrorCheck
 
+# Allow server processing time
+Start-Sleep -Milliseconds 500
+
 # Submit with sso_reload
 $LoginUri = "https://login.microsoftonline.com/common/login?sso_reload=true"
 $Payload.flowToken = $SessionInformation.oGetCredTypeResult.FlowToken
@@ -422,11 +433,24 @@ $Payload.flowToken = $SessionInformation.oGetCredTypeResult.FlowToken
 Write-Host "$([char]0x2718) Submitting FIDO2 assertion with sso_reload..." -ForegroundColor Cyan
 $respFinalize = Invoke-WebRequest -UseBasicParsing -Uri $LoginUri -Method Post -Body $Payload -WebSession $session -MaximumRedirection 0 -SkipHttpErrorCheck
 
-$respFinalize.Content -match '{(.*)}' | Out-Null
-$Debug = $Matches[0] | ConvertFrom-Json
-if ($Debug.pgid) {
-    Write-Host "$([char]0x2718) PageID: $($Debug.pgid)" -ForegroundColor Gray
-    $CurrentPageId = $Debug.pgid
+# Allow server processing time before parsing response
+Start-Sleep -Milliseconds 500
+
+# Parse response with validation
+if (-not ($respFinalize.Content -match '{(.*)}')) {
+    Write-Warning "No JSON response received from server. Login may have completed."
+    $Debug = @{ pgid = $null }
+} else {
+    try {
+        $Debug = $Matches[0] | ConvertFrom-Json
+        if ($Debug.pgid) {
+            Write-Host "$([char]0x2718) PageID: $($Debug.pgid)" -ForegroundColor Gray
+            $CurrentPageId = $Debug.pgid
+        }
+    } catch {
+        Write-Verbose "Failed to parse response JSON: $($_.Exception.Message)"
+        $Debug = @{ pgid = $null }
+    }
 }
 
 # Handle interrupts (CMSI, KMSI, etc.)
@@ -470,6 +494,7 @@ $InterruptHandlers = @{
 while ($Debug.pgid -in $InterruptHandlers.Keys) {
     if ($CurrentPageId -eq $LastPageId -or ++$LoopCount -gt 10) {
         Write-Warning "$(if ($CurrentPageId -eq $LastPageId) { 'Stuck in' } else { 'Exceeded maximum' }) interrupt loop. Exiting."
+        Write-Verbose "LastPageId: $LastPageId, CurrentPageId: $CurrentPageId, LoopCount: $LoopCount"
         break
     }
     $LastPageId = $CurrentPageId
@@ -495,28 +520,45 @@ while ($Debug.pgid -in $InterruptHandlers.Keys) {
     }
     
     $respFinalize = Invoke-WebRequest @params
+    
+    # Allow server processing time after handling interrupt
+    Start-Sleep -Milliseconds 300
 
-    if (-not ($respFinalize.Content -match '{(.*)}')) { break }
+    if (-not ($respFinalize.Content -match '{(.*)}')) {
+        Write-Verbose "No JSON response from interrupt handler. Assuming completion."
+        break
+    }
     
     try {
         $Debug = $Matches[0] | ConvertFrom-Json
         if ($Debug.pgid) {
             Write-Host "$([char]0x2718) PageID: $($Debug.pgid)" -ForegroundColor Gray
             $CurrentPageId = $Debug.pgid
+        } else {
+            # No page ID means we're likely done with interrupts
+            Write-Verbose "No page ID in response. Exiting interrupt loop."
+            break
         }
     } catch {
         Write-Warning "Failed to parse JSON response. Exiting loop."
+        Write-Verbose "Parse error: $($_.Exception.Message)"
         break
     }
 }
 
+# Allow final cookie propagation
+Start-Sleep -Milliseconds 500
+
 # Check success
-if ($session.Cookies.GetCookies("https://login.microsoftonline.com") | Where-Object Name -Like "ESTS*") {
-    Write-Host "`n$([char]0x2714) Login Successful!" -ForegroundColor Green
+$allCookies = $session.Cookies.GetCookies("https://login.microsoftonline.com")
+Write-Verbose "Checking cookies: $($allCookies.Name -join ', ')"
+
+if ($allCookies | Where-Object Name -Like "ESTS*") {
+    Write-Host "\n$([char]0x2714) Login Successful!" -ForegroundColor Green
     
-    $ESTSAUTH = $session.Cookies.GetCookies("https://login.microsoftonline.com") | Where-Object Name -EQ "ESTSAUTH"
-    $ESTSAUTHPERSISTENT = $session.Cookies.GetCookies("https://login.microsoftonline.com") | Where-Object Name -EQ "ESTSAUTHPERSISTENT"
-    $ESTSAUTHLIGHT = $session.Cookies.GetCookies("https://login.microsoftonline.com") | Where-Object Name -EQ "ESTSAUTHLIGHT"
+    $ESTSAUTH = $allCookies | Where-Object Name -EQ "ESTSAUTH"
+    $ESTSAUTHPERSISTENT = $allCookies | Where-Object Name -EQ "ESTSAUTHPERSISTENT"
+    $ESTSAUTHLIGHT = $allCookies | Where-Object Name -EQ "ESTSAUTHLIGHT"
     
     $ests = @($ESTSAUTH, $ESTSAUTHPERSISTENT, $ESTSAUTHLIGHT) | Sort-Object { $_.Value.Length } -Descending | Select-Object -First 1
     
