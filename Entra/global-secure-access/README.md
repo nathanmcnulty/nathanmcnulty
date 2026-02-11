@@ -75,7 +75,7 @@ Connect-AzAccount
 ### Basic Usage
 
 ```powershell
-.\Initialize-GSATLSInspection.ps1 -OrganizationName "Contoso"
+.\Initialize-GSATLSInspection.ps1 -OrganizationName "ShareMyLabs"
 ```
 
 This creates:
@@ -88,12 +88,12 @@ This creates:
 
 ```powershell
 .\Initialize-GSATLSInspection.ps1 `
-    -OrganizationName "Contoso" `
+    -OrganizationName "ShareMyLabs" `
     -LogAnalyticsWorkspaceId "/subscriptions/.../workspaces/security-logs" `
     -EnableDefender `
     -Verbose
 
-# Note: Policies created but not assigned - manually assign to specific groups in Intune portal
+# Note: Policies created but not assigned - manually assign to specific groups for testing first in the Intune portal
 # For testing environments only, add: -AssignIntunePolicies
 ```
 
@@ -103,7 +103,7 @@ This creates:
 
 - **Private keys never leave Key Vault**: Non-exportable keys, signing via Key Vault REST API
 - **Microsoft Security Benchmark compliant**: DP-8 (key repository), LT-4 (audit logging), LT-1 (threat detection)
-- **HSM-backed keys**: Premium SKU uses FIPS 140-2 Level 2 hardware
+- **HSM-backed keys**: Premium SKU uses FIPS 140-2 Level 2 compliant hardware security modules
 - **RBAC authorization**: Least privilege access model
 - **Soft delete + purge protection**: Accidental deletion protection
 
@@ -118,13 +118,13 @@ This creates:
 ### 📊 Monitoring & Compliance
 
 - Optional Log Analytics integration (2-year retention)
-- Optional Microsoft Defender for Key Vault
+- Optional Microsoft Defender for Key Vault (Recommended)
 - Diagnostic logging for all key operations
 - Detailed output for tracking and reporting
 
 ### 📱 Multi-Platform Support
 
-Creates 4 Intune Settings Catalog policies:
+Creates 4 Intune policies:
 - Windows (Trusted Root Certification Authorities)
 - macOS (System Keychain)
 - iOS (System Trust Store)
@@ -146,7 +146,7 @@ Creates 4 Intune Settings Catalog policies:
 ## Post-Setup Steps
 
 1. **Verify GSA Certificate**
-   - Navigate to: [TLS Inspection Settings](https://entra.microsoft.com/#view/Microsoft_AAD_IAM/GlobalSecureAccessMenuBlade/~/TLSInspection)
+   - Navigate to: [TLS Inspection Settings](https://entra.microsoft.com/#view/Microsoft_Azure_Network_Access/TLSInspectionPolicy.ReactView)
    - Confirm certificate status: **Enabled**
 
 2. **Assign Intune Policies** (default - manual assignment required)
@@ -187,7 +187,7 @@ Creates 4 Intune Settings Catalog policies:
 - Review Graph API error details in verbose output
 
 **TLS Inspection Not Working**
-- Allow 30-60 min for Intune certificate deployment
+- Allow at least 60 min for Intune certificate deployment
 - Reboot device after certificate installation
 - Verify GSA client in "Connected" state
 - Test with: `https://example.com` (should show "Issued by: Global Secure Access TLS CA")
@@ -211,20 +211,20 @@ Remove-AzKeyVault -VaultName "kv-name" -Location "eastus" -InRemovedState -Force
 │          Azure Key Vault (Premium SKU)          │
 │  ┌───────────────────────────────────────────┐  │
 │  │  Root CA Certificate                      │  │
-│  │  - CN: Global Secure Access TLS CA       │  │
-│  │  - RSA 4096 (HSM-backed)                 │  │
-│  │  - Validity: 10 years                    │  │
-│  │  - Private Key: NON-EXPORTABLE           │  │
-│  │  - Extensions: CA=true, pathLen=1        │  │
+│  │  - CN: Global Secure Access TLS CA        │  │
+│  │  - RSA 4096 (HSM-backed)                  │  │
+│  │  - Validity: 10 years                     │  │
+│  │  - Private Key: NON-EXPORTABLE            │  │
+│  │  - Extensions: CA=true, pathLen=1         │  │
 │  └───────────────────────────────────────────┘  │
-│                       │                          │
-│                       ▼                          │
+│                       │                         │
+│                       ▼                         │
 │  ┌───────────────────────────────────────────┐  │
 │  │  Key Vault Signing API                    │  │
 │  │  POST /keys/{name}/sign                   │  │
-│  │  - Input: SHA256 hash of CSR TBS         │  │
-│  │  - Output: RSA 4096 signature            │  │
-│  │  - Private key never leaves HSM          │  │
+│  │  - Input: SHA256 hash of CSR TBS          │  │
+│  │  - Output: RSA 4096 signature             │  │
+│  │  - Private key never leaves HSM           │  │
 │  └───────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────┘
                        │
@@ -239,8 +239,8 @@ Remove-AzKeyVault -VaultName "kv-name" -Location "eastus" -InRemovedState -Force
 │  │  - EKU: serverAuth                        │  │
 │  │  - Status: Enabled                        │  │
 │  └───────────────────────────────────────────┘  │
-│                       │                          │
-│                       ▼                          │
+│                       │                         │
+│                       ▼                         │
 │  Issues leaf certificates for intercepted HTTPS │
 └─────────────────────────────────────────────────┘
                        │
@@ -310,7 +310,7 @@ The root CA has a 10-year validity. Plan renewal 1 year before expiration:
 1. Generate new root CA certificate in same Key Vault:
    ```powershell
    .\Initialize-GSATLSInspection.ps1 `
-       -OrganizationName "Contoso" `
+       -OrganizationName "ShareMyLabs" `
        -CertificateCommonName "Global Secure Access TLS CA v2" `
        -KeyVaultName "existing-vault" `
        -Force
@@ -343,7 +343,7 @@ GSA automatically begins issuing new leaf certificates using the updated interme
 
 ```
 ╔════════════════════════════════════════════════════════════════════╗
-║  Global Secure Access TLS Inspection - Setup Complete             ║
+║  Global Secure Access TLS Inspection - Setup Complete              ║
 ╚════════════════════════════════════════════════════════════════════╝
 
 ✓ Azure Key Vault
@@ -357,7 +357,7 @@ GSA automatically begins issuing new leaf certificates using the updated interme
 
 ✓ Root CA Certificate
    Name:         gsa-tls-root-ca
-   Subject:      CN=Global Secure Access TLS CA, O=Contoso
+   Subject:      CN=Global Secure Access TLS CA, O=ShareMyLabs
    Thumbprint:   A1B2C3D4E5F6...
    Key:          RSA 4096 (Non-exportable)
    Validity:     2026-02-10 → 2036-02-10 (10 years)
@@ -388,4 +388,3 @@ Next Steps:
 ---
 
 For issues or questions about the automation script, please open an issue in the repository.
-
