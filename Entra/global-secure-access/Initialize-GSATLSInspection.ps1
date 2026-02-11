@@ -57,7 +57,9 @@
 
 .PARAMETER AssignIntunePolicies
     Automatically assign Intune policies to "All Devices" group.
-    If not specified, policies are created but not assigned.
+    DEFAULT: Policies are created but NOT assigned (requires manual assignment).
+    RECOMMENDATION: Manual assignment to specific groups is the best practice for production.
+    Only use this switch for testing/lab environments where broad deployment is acceptable.
 
 .PARAMETER Force
     Force recreation of existing resources after confirmation prompts.

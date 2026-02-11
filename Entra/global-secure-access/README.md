@@ -84,15 +84,17 @@ This creates:
 - GSA intermediate certificate (5 years)
 - 4 Intune policies to deploy root certificate to all platforms
 
-### Production Setup
+### Production Setup with Monitoring
 
 ```powershell
 .\Initialize-GSATLSInspection.ps1 `
     -OrganizationName "Contoso" `
     -LogAnalyticsWorkspaceId "/subscriptions/.../workspaces/security-logs" `
     -EnableDefender `
-    -AssignIntunePolicies `
     -Verbose
+
+# Note: Policies created but not assigned - manually assign to specific groups in Intune portal
+# For testing environments only, add: -AssignIntunePolicies
 ```
 
 ## Key Features
@@ -138,7 +140,7 @@ Creates 4 Intune Settings Catalog policies:
 | `Location` | `eastus` | Azure region |
 | `LogAnalyticsWorkspaceId` | None | Enable audit logs (full resource ID) |
 | `EnableDefender` | False | Enable Defender for Key Vault |
-| `AssignIntunePolicies` | False | Auto-assign to All Devices |
+| `AssignIntunePolicies` | False | Assign to All Devices (not recommended; manual assignment to groups preferred) |
 | `Force` | False | Recreate existing resources |
 
 ## Post-Setup Steps
@@ -147,9 +149,11 @@ Creates 4 Intune Settings Catalog policies:
    - Navigate to: [TLS Inspection Settings](https://entra.microsoft.com/#view/Microsoft_AAD_IAM/GlobalSecureAccessMenuBlade/~/TLSInspection)
    - Confirm certificate status: **Enabled**
 
-2. **Assign Intune Policies** (if not using `-AssignIntunePolicies`)
+2. **Assign Intune Policies** (default - manual assignment required)
    - Intune → Devices → Configuration
-   - Assign "GSA TLS Root Certificate" policies to groups
+   - Assign "GSA TLS Root Certificate" policies to appropriate device groups
+   - **Best Practice**: Target specific pilot groups first, then expand to production
+   - **Note**: Use `-AssignIntunePolicies` switch only for testing environments if you want automatic "All Devices" assignment
 
 3. **Enable TLS Inspection**
    - Global Secure Access → Secure → TLS inspection policies
@@ -365,19 +369,20 @@ GSA automatically begins issuing new leaf certificates using the updated interme
    Portal:       https://entra.microsoft.com/#view/.../TLSInspection
 
 ✓ Intune Policies Created
-   Windows:      24b9a8c7-... (Assigned to: All Devices)
-   macOS:        35c1d9e8-... (Assigned to: All Devices)
-   iOS:          46d2e0f9-... (Assigned to: All Devices)
-   Android:      57e3f1g0-... (Assigned to: All Devices)
+   Windows:      24b9a8c7-... (Not assigned - manual assignment required)
+   macOS:        35c1d9e8-... (Not assigned - manual assignment required)
+   iOS:          46d2e0f9-... (Not assigned - manual assignment required)
+   Android:      57e3f1g0-... (Not assigned - manual assignment required)
 
 Next Steps:
   1. Verify certificate in GSA portal (status should be "Enabled")
-  2. Monitor Intune policy deployment (30-60 min)
-  3. Create TLS inspection policy in GSA → Secure
-  4. Assign policy to pilot user group
-  5. Test with pilot users, verify leaf certificates issued by GSA CA
-  6. Expand to production users
-  7. Set calendar reminder for certificate renewal (4 years)
+  2. Assign Intune policies to device groups (policies created but not assigned)
+  3. Monitor Intune policy deployment (30-60 min for certificate distribution)
+  4. Create TLS inspection policy in GSA → Secure
+  5. Assign TLS inspection policy to pilot user group
+  6. Test with pilot users, verify leaf certificates issued by GSA CA
+  7. Expand to production users
+  8. Set calendar reminder for certificate renewal (4 years)
 ```
 
 ---
