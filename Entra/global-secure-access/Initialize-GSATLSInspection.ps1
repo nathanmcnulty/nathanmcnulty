@@ -10,6 +10,7 @@
     - Signs CSR using Azure Key Vault signing operations (private key never leaves vault)
     - Uploads signed certificate to Global Secure Access
     - Creates Intune trusted root certificate policies for all platforms
+    - Provisions CRL Distribution Point via Azure Storage static website
     
     Security Features:
     - RBAC authorization (not access policies)
@@ -55,6 +56,26 @@
     Restrict Key Vault to private network access only via private endpoint.
     Note: Requires VNet configuration (not implemented in this version).
 
+.PARAMETER CrlHostname
+    Optional custom hostname for the CRL Distribution Point (e.g., 'crl.sharemylabs.com').
+    A CRL is always created and hosted on an Azure Storage static website.
+    
+    When provided:
+    - The CDP URL in the certificate uses this hostname (http://{CrlHostname}/gsa-tls-root-ca.crl)
+    - The script outputs CNAME instructions to map this hostname to the storage static website
+    
+    When omitted:
+    - The CDP URL uses the Azure Storage static website URL directly
+    
+    The CRL is served over HTTP (not HTTPS) per RFC 5280 best practice.
+    CRLs are cryptographically signed, so transport security is not needed
+    and HTTPS could create a circular dependency for revocation checking.
+
+.PARAMETER StorageAccountName
+    Azure Storage Account name for CRL hosting. Must be 3-24 characters, lowercase
+    letters and numbers only. If not provided, derives a name from OrganizationName
+    (e.g., 'sagsacrlcontoso') and verifies availability.
+
 .PARAMETER AssignIntunePolicies
     Automatically assign Intune policies to "All Devices" group.
     DEFAULT: Policies are created but NOT assigned (requires manual assignment).
@@ -66,19 +87,27 @@
     Uses ShouldContinue for per-resource confirmation.
 
 .EXAMPLE
-    .\Initialize-GSATLSInspection.ps1 -OrganizationName "Contoso"
+    .\Initialize-GSATLSInspection.ps1 -OrganizationName "sharemylabs"
     
-    Creates Key Vault with Premium SKU and sets up TLS inspection with default settings.
+    Sets up TLS inspection with CRL hosted on Azure Storage static website.
+    The CDP URL uses the storage account's static website URL directly.
 
 .EXAMPLE
-    .\Initialize-GSATLSInspection.ps1 -OrganizationName "Contoso" `
+    .\Initialize-GSATLSInspection.ps1 -OrganizationName "sharemylabs" `
+        -CrlHostname "crl.sharemylabs.com" -Verbose
+    
+    Sets up TLS inspection with CRL published under a custom hostname.
+    Outputs CNAME instructions to map the hostname to the storage static website.
+
+.EXAMPLE
+    .\Initialize-GSATLSInspection.ps1 -OrganizationName "sharemylabs" `
         -LogAnalyticsWorkspaceId "/subscriptions/.../workspaces/my-law" `
         -EnableDefender -AssignIntunePolicies -Verbose
     
     Full setup with logging, threat detection, and automatic policy assignment.
 
 .EXAMPLE
-    .\Initialize-GSATLSInspection.ps1 -OrganizationName "Contoso" `
+    .\Initialize-GSATLSInspection.ps1 -OrganizationName "sharemylabs" `
         -KeyVaultName "existing-vault" -Force
     
     Uses existing Key Vault and recreates certificates if they exist.
@@ -139,6 +168,13 @@ param(
     
     [Parameter(Mandatory = $false)]
     [switch]$EnablePrivateEndpoint,
+    
+    [Parameter(Mandatory = $false)]
+    [string]$CrlHostname,
+    
+    [Parameter(Mandatory = $false)]
+    [ValidatePattern('^[a-z0-9]{3,24}$')]
+    [string]$StorageAccountName,
     
     [Parameter(Mandatory = $false)]
     [switch]$AssignIntunePolicies,
@@ -416,7 +452,8 @@ function New-SignedCertificateFromCSR {
         [System.Security.Cryptography.X509Certificates.X509Certificate2]$IssuerCert,
         [string]$KeyVaultName,
         [string]$KeyVaultKeyId,
-        [int]$ValidityYears = 5
+        [int]$ValidityYears = 5,
+        [string]$CrlDistributionPointUrl
     )
     
     Write-Host "`n  Creating signed certificate from CSR..." -ForegroundColor Cyan
@@ -483,6 +520,16 @@ function New-SignedCertificateFromCSR {
         $certRequest.CertificateExtensions.Add($aki)
     } else {
         Write-Warning "Issuer certificate does not have SKI extension - AKI cannot be added"
+    }
+    
+    # Add CRL Distribution Points if URL provided
+    if ($CrlDistributionPointUrl) {
+        Write-Info "Adding CDP: $CrlDistributionPointUrl"
+        $cdpExtension = [System.Security.Cryptography.X509Certificates.CertificateRevocationListBuilder]::BuildCrlDistributionPointExtension(
+            [string[]]@($CrlDistributionPointUrl),
+            $false  # not critical
+        )
+        $certRequest.CertificateExtensions.Add($cdpExtension)
     }
     
     # Generate serial number (16 random bytes)
@@ -640,6 +687,187 @@ function New-SignedCertificateFromCSR {
     }
 }
 
+function Get-StorageToken {
+    # Get OAuth token for Azure Storage data plane operations
+    $tokenResponse = Get-AzAccessToken -ResourceUrl "https://storage.azure.com"
+    $tok = $tokenResponse.Token
+    if ($tok -is [System.Security.SecureString]) {
+        return $tok | ConvertFrom-SecureString -AsPlainText
+    }
+    return $tok
+}
+
+function New-CrlFromKeyVault {
+    <#
+    .SYNOPSIS
+        Generates an empty CRL signed by the root CA key in Azure Key Vault.
+    .DESCRIPTION
+        Uses the same dummy-key + DER-extraction + Key Vault re-signing pattern as
+        New-SignedCertificateFromCSR. The private key never leaves Key Vault.
+        
+        CRL structure: SEQUENCE { TBSCertList, SignatureAlgorithm, SignatureValue }
+        (same outer structure as an X.509 certificate)
+    #>
+    param(
+        [System.Security.Cryptography.X509Certificates.X509Certificate2]$IssuerCert,
+        [string]$KeyVaultKeyId,
+        [int]$CrlNumber = 1,
+        [int]$NextUpdateDays = 30
+    )
+    
+    Write-Host "  Generating CRL signed by Key Vault..." -ForegroundColor Cyan
+    
+    # Build an empty CRL using .NET 7+ CertificateRevocationListBuilder
+    $crlBuilder = [System.Security.Cryptography.X509Certificates.CertificateRevocationListBuilder]::new()
+    
+    $crlNum = [System.Numerics.BigInteger]::new($CrlNumber)
+    $nextUpdate = [DateTimeOffset]::UtcNow.AddDays($NextUpdateDays)
+    $thisUpdate = [DateTimeOffset]::UtcNow
+    $hashAlgorithm = [System.Security.Cryptography.HashAlgorithmName]::SHA256
+    $rsaPadding = [System.Security.Cryptography.RSASignaturePadding]::Pkcs1
+    
+    # Build CRL with a temporary local RSA key to get the TBS structure.
+    # We'll extract the TBS bytes, sign them with Key Vault, and rebuild the CRL.
+    Write-Verbose "Creating CRL structure with temporary signing key..."
+
+    # Build AKI from the issuer's Subject Key Identifier
+    $issuerSkiExt = $IssuerCert.Extensions | Where-Object { $_.Oid.Value -eq "2.5.29.14" }
+    if (-not $issuerSkiExt) {
+        throw "Issuer certificate does not have a Subject Key Identifier extension"
+    }
+    $skiTyped = [System.Security.Cryptography.X509Certificates.X509SubjectKeyIdentifierExtension]$issuerSkiExt
+    $aki = [System.Security.Cryptography.X509Certificates.X509AuthorityKeyIdentifierExtension]::CreateFromSubjectKeyIdentifier($skiTyped)
+
+    # Build CRL with proper issuer DN and AKI, signed by dummy key
+    $dummyKey = [System.Security.Cryptography.RSA]::Create(4096)
+    try {
+        $dummyGenerator = [System.Security.Cryptography.X509Certificates.X509SignatureGenerator]::CreateForRSA(
+            $dummyKey,
+            $rsaPadding
+        )
+        [byte[]]$dummyCrlBytes = $crlBuilder.Build(
+            $IssuerCert.SubjectName,
+            $dummyGenerator,
+            $crlNum,
+            $nextUpdate,
+            $hashAlgorithm,
+            $aki,
+            $thisUpdate
+        )
+    } finally {
+        $dummyKey.Dispose()
+    }
+    
+    Write-Verbose "CRL with real issuer DN, size: $($dummyCrlBytes.Length) bytes"
+
+    # Extract TBS (To Be Signed) portion from the CRL DER
+    # CRL DER: SEQUENCE { TBSCertList, SignatureAlgorithm, SignatureValue }
+    $offset = 0
+    if ($dummyCrlBytes[$offset] -ne 0x30) { throw "Invalid CRL: expected outer SEQUENCE tag (0x30)" }
+    $offset++
+
+    # Skip outer length
+    if ($dummyCrlBytes[$offset] -band 0x80) {
+        $lenByteCount = $dummyCrlBytes[$offset] -band 0x7F
+        $offset += 1 + $lenByteCount
+    } else {
+        $offset++
+    }
+
+    # Now at TBSCertList start
+    $tbsStart = $offset
+    if ($dummyCrlBytes[$offset] -ne 0x30) { throw "Invalid CRL: expected TBSCertList SEQUENCE tag (0x30)" }
+    $offset++
+
+    if ($dummyCrlBytes[$offset] -band 0x80) {
+        $lenByteCount = $dummyCrlBytes[$offset] -band 0x7F
+        $offset++
+        $tbsContentLen = 0
+        for ($i = 0; $i -lt $lenByteCount; $i++) {
+            $tbsContentLen = ($tbsContentLen -shl 8) + $dummyCrlBytes[$offset + $i]
+        }
+        $offset += $lenByteCount
+    } else {
+        $tbsContentLen = $dummyCrlBytes[$offset]
+        $offset++
+    }
+
+    $tbsEnd = $offset + $tbsContentLen
+    [byte[]]$tbsBytes = $dummyCrlBytes[$tbsStart..($tbsEnd - 1)]
+    Write-Info "TBS CertList size: $($tbsBytes.Length) bytes"
+
+    # Hash TBS with SHA-256
+    [byte[]]$tbsHash = [System.Security.Cryptography.SHA256]::HashData($tbsBytes)
+    Write-Verbose "TBS hash: $([BitConverter]::ToString($tbsHash).Replace('-',''))"
+
+    # Sign with Key Vault
+    Write-Host "  Signing CRL with Key Vault..." -ForegroundColor Cyan
+    
+    $signUri = "$KeyVaultKeyId/sign?api-version=7.5"
+    $token = Get-KeyVaultToken
+    $headers = @{
+        Authorization  = "Bearer $token"
+        "Content-Type" = "application/json"
+    }
+    
+    $signBody = @{
+        alg   = "RS256"
+        value = ConvertTo-Base64Url $tbsHash
+    } | ConvertTo-Json
+    
+    try {
+        $signResult = Invoke-RestMethod -Uri $signUri -Method POST -Headers $headers -Body $signBody
+        [byte[]]$kvSignature = ConvertFrom-Base64Url $signResult.value
+        Write-Info "CRL signature size: $($kvSignature.Length) bytes"
+    } catch {
+        Write-Error "Failed to sign CRL with Key Vault: $_"
+        throw
+    }
+
+    # Rebuild CRL DER with Key Vault signature
+    # Structure: SEQUENCE { TBSCertList, SignatureAlgorithm, SignatureValue }
+    Write-Verbose "Constructing final signed CRL..."
+
+    # Signature Algorithm Identifier: SHA256withRSA (OID 1.2.840.113549.1.1.11)
+    [byte[]]$sigAlgId = @(0x30, 0x0D, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B, 0x05, 0x00)
+
+    # Signature Value as BIT STRING
+    [byte[]]$sigValueContent = @(0x00) + $kvSignature
+    $sigBitString = [System.Collections.Generic.List[byte]]::new()
+    $sigBitString.Add(0x03)
+    [byte[]]$sigLenBytes = Get-DerLength $sigValueContent.Length
+    $sigBitString.AddRange($sigLenBytes)
+    $sigBitString.AddRange([byte[]]$sigValueContent)
+
+    # Combine into inner content
+    [byte[]]$innerContent = $tbsBytes + $sigAlgId + [byte[]]$sigBitString.ToArray()
+
+    # Wrap in outer SEQUENCE
+    $finalCrl = [System.Collections.Generic.List[byte]]::new()
+    $finalCrl.Add(0x30)
+    [byte[]]$outerLenBytes = Get-DerLength $innerContent.Length
+    $finalCrl.AddRange($outerLenBytes)
+    $finalCrl.AddRange($innerContent)
+
+    [byte[]]$finalCrlBytes = $finalCrl.ToArray()
+
+    # Verify signature
+    $issuerRsa = $IssuerCert.PublicKey.GetRSAPublicKey()
+    $sigVerified = $issuerRsa.VerifyData($tbsBytes, $kvSignature, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+    if ($sigVerified) {
+        Write-Success "CRL signed and verified successfully"
+    } else {
+        Write-Warning "CRL signature verification FAILED"
+    }
+
+    Write-Info "CRL Number: $CrlNumber"
+    Write-Info "This Update: $($thisUpdate.ToString('yyyy-MM-dd HH:mm:ss')) UTC"
+    Write-Info "Next Update: $($nextUpdate.ToString('yyyy-MM-dd HH:mm:ss')) UTC"
+    Write-Info "CRL size: $($finalCrlBytes.Length) bytes"
+
+    return $finalCrlBytes
+}
+
 function New-IntuneTrustedRootCertPolicy {
     param(
         [string]$Platform,
@@ -730,7 +958,10 @@ foreach ($module in $requiredModules) {
     }
 }
 
-Write-StepHeader "Step 1: Authentication & Context"
+$stepNum = 1
+
+Write-StepHeader "Step $($stepNum): Authentication & Context"
+$stepNum++
 
 # Check Graph connection
 try {
@@ -785,6 +1016,44 @@ if (-not $KeyVaultName) {
     Write-Info "Generated Key Vault name: $KeyVaultName"
 }
 
+# Generate Storage Account name for CRL hosting
+if (-not $StorageAccountName) {
+    # Derive from OrganizationName: lowercase, alphanumeric only, prefixed with 'sagsacrl'
+    $sanitizedOrg = ($OrganizationName -replace '[^a-zA-Z0-9]', '').ToLower()
+    $saPrefix = "sagsacrl"
+    $maxOrgLen = 24 - $saPrefix.Length  # 16 chars available for org name
+    $orgPart = $sanitizedOrg.Substring(0, [Math]::Min($sanitizedOrg.Length, $maxOrgLen))
+    $candidateName = "$saPrefix$orgPart"
+    
+    # Ensure minimum length of 3
+    if ($candidateName.Length -lt 3) {
+        $candidateName = "sagsacrl$((-join ((97..122) + (48..57) | Get-Random -Count 8 | ForEach-Object { [char]$_ })))"
+    }
+    
+    # Check name availability via Azure REST API
+    $checkUri = "/subscriptions/$SubscriptionId/providers/Microsoft.Storage/checkNameAvailability?api-version=2023-05-01"
+    $checkBody = @{ name = $candidateName; type = "Microsoft.Storage/storageAccounts" } | ConvertTo-Json
+    $checkResponse = Invoke-AzRestMethod -Method POST -Path $checkUri -Payload $checkBody
+    $availability = ($checkResponse.Content | ConvertFrom-Json)
+    
+    if ($availability.nameAvailable) {
+        $StorageAccountName = $candidateName
+    } else {
+        # Name taken or invalid - append random suffix for uniqueness
+        Write-Verbose "Storage account name '$candidateName' unavailable: $($availability.reason). Adding random suffix."
+        $random = -join ((97..122) + (48..57) | Get-Random -Count 4 | ForEach-Object { [char]$_ })
+        $maxOrgLen = 24 - $saPrefix.Length - 4  # 12 chars for org
+        $orgPart = $sanitizedOrg.Substring(0, [Math]::Min($sanitizedOrg.Length, $maxOrgLen))
+        $StorageAccountName = "$saPrefix$orgPart$random"
+    }
+    
+    Write-Info "Generated Storage Account name: $StorageAccountName"
+}
+
+# Construct CRL URL (deferred to after storage account creation if no custom hostname)
+$crlFileName = "gsa-tls-root-ca.crl"
+$crlUrl = if ($CrlHostname) { "http://$CrlHostname/$crlFileName" } else { $null }
+
 Write-Host "`nConfiguration:" -ForegroundColor Cyan
 Write-Host "  Subscription:     $SubscriptionId" -ForegroundColor White
 Write-Host "  Resource Group:   $ResourceGroupName" -ForegroundColor White
@@ -801,8 +1070,16 @@ if ($EnableDefender) {
 if ($AssignIntunePolicies) {
     Write-Host "  Intune Assign:    All Devices" -ForegroundColor White
 }
+Write-Host "  Storage Account:  $StorageAccountName" -ForegroundColor White
+if ($CrlHostname) {
+    Write-Host "  CRL Hostname:     $CrlHostname" -ForegroundColor White
+    Write-Host "  CRL URL:          $crlUrl" -ForegroundColor White
+} else {
+    Write-Host "  CRL URL:          (auto - storage static website)" -ForegroundColor White
+}
 
-Write-StepHeader "Step 2: Resource Group"
+Write-StepHeader "Step $($stepNum): Resource Group"
+$stepNum++
 
 $rgUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName`?api-version=2021-04-01"
 
@@ -844,7 +1121,8 @@ try {
     }
 }
 
-Write-StepHeader "Step 3: Key Vault (Microsoft Security Benchmark DP-8)"
+Write-StepHeader "Step $($stepNum): Key Vault (Microsoft Security Benchmark DP-8)"
+$stepNum++
 
 $kvUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.KeyVault/vaults/$KeyVaultName`?api-version=2023-07-01"
 
@@ -1042,7 +1320,8 @@ if ($currentObjectId) {
 
 # Enable diagnostic logs if workspace provided
 if ($LogAnalyticsWorkspaceId) {
-    Write-StepHeader "Step 4: Diagnostic Logging (LT-4)"
+    Write-StepHeader "Step $($stepNum): Diagnostic Logging (LT-4)"
+    $stepNum++
     Enable-KeyVaultDiagnosticLogs -SubscriptionId $SubscriptionId -ResourceGroupName $ResourceGroupName -VaultName $KeyVaultName -WorkspaceId $LogAnalyticsWorkspaceId
 } else {
     Write-Info "Skipping diagnostic logs (no Log Analytics workspace specified)"
@@ -1050,11 +1329,167 @@ if ($LogAnalyticsWorkspaceId) {
 
 # Enable Defender if requested
 if ($EnableDefender) {
-    Write-StepHeader "Step 5: Microsoft Defender for Key Vault (LT-1)"
+    Write-StepHeader "Step $($stepNum): Microsoft Defender for Key Vault (LT-1)"
+    $stepNum++
     Enable-DefenderForKeyVault -SubscriptionId $SubscriptionId
 }
 
-Write-StepHeader "Step $(if ($LogAnalyticsWorkspaceId -or $EnableDefender) { 6 } else { 4 }): Root CA Certificate"
+# Provision Storage Account for CRL hosting
+$staticWebsiteHostname = $null
+Write-StepHeader "Step $($stepNum): Storage Account for CRL Hosting"
+$stepNum++
+
+$saUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Storage/storageAccounts/$StorageAccountName`?api-version=2023-05-01"
+
+try {
+    $existingSA = Invoke-AzRestMethod -Method GET -Path $saUri
+    if ($existingSA.StatusCode -eq 200) {
+        Write-Success "Storage account exists: $StorageAccountName"
+        $saData = $existingSA.Content | ConvertFrom-Json
+        $staticWebsiteHostname = ($saData.properties.primaryEndpoints.web -replace 'https?://', '').TrimEnd('/')
+        Write-Info "Static website endpoint: $staticWebsiteHostname"
+    } else {
+        throw "Does not exist"
+    }
+} catch {
+    Write-Host "  Creating storage account for CRL hosting..." -ForegroundColor Yellow
+    
+    $saBody = @{
+        kind = "StorageV2"
+        location = $Location
+        sku = @{ name = "Standard_LRS" }
+        properties = @{
+            allowBlobPublicAccess = $false
+            minimumTlsVersion = "TLS1_2"
+            supportsHttpsTrafficOnly = $false  # Required for HTTP CRL access
+            allowSharedKeyAccess = $true  # Needed for static website config
+        }
+        tags = @{
+            Purpose = "GSA TLS CRL Distribution Point"
+            ManagedBy = "Initialize-GSATLSInspection.ps1"
+        }
+    } | ConvertTo-Json -Depth 10
+    
+    $response = Invoke-AzRestMethodWithRetry -Method PUT -Uri $saUri -Payload $saBody
+    
+    if ($response.StatusCode -in @(200, 201, 202)) {
+        Write-Success "Storage account created"
+        
+        # Wait for provisioning to complete
+        Write-Host "  Waiting for storage account provisioning..." -ForegroundColor Gray
+        $maxAttempts = 24
+        $attempt = 0
+        $saReady = $false
+        
+        while (-not $saReady -and $attempt -lt $maxAttempts) {
+            $attempt++
+            Start-Sleep -Seconds 5
+            Write-Host "." -NoNewline -ForegroundColor Gray
+            
+            try {
+                $saCheck = Invoke-AzRestMethod -Method GET -Path $saUri
+                if ($saCheck.StatusCode -eq 200) {
+                    $saCheckData = $saCheck.Content | ConvertFrom-Json
+                    if ($saCheckData.properties.provisioningState -eq "Succeeded") {
+                        $saReady = $true
+                        Write-Host ""
+                        Write-Success "Storage account is ready"
+                    }
+                }
+            } catch { }
+        }
+        
+        if (-not $saReady) {
+            Write-Error "Storage account provisioning timed out"
+            exit 1
+        }
+    } else {
+        Write-Error "Failed to create storage account: $($response.StatusCode) - $($response.Content)"
+        exit 1
+    }
+}
+
+# Enable static website
+Write-Host "  Enabling static website hosting..." -ForegroundColor Gray
+
+# Get storage account key for data plane operations
+$keysUri = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Storage/storageAccounts/$StorageAccountName/listKeys?api-version=2023-05-01"
+$keysResponse = Invoke-AzRestMethod -Method POST -Path $keysUri
+if ($keysResponse.StatusCode -ne 200) {
+    Write-Error "Failed to get storage account keys: $($keysResponse.StatusCode)"
+    exit 1
+}
+$storageKey = ($keysResponse.Content | ConvertFrom-Json).keys[0].value
+
+# Enable static website via Blob Service Properties (data plane)
+$blobServiceUri = "https://$StorageAccountName.blob.core.windows.net/?restype=service&comp=properties"
+
+$staticWebsiteXml = @"
+<?xml version="1.0" encoding="utf-8"?>
+<StorageServiceProperties>
+  <StaticWebsite>
+    <Enabled>true</Enabled>
+    <IndexDocument>index.html</IndexDocument>
+  </StaticWebsite>
+</StorageServiceProperties>
+"@
+
+# Build Shared Key authorization header
+$dateHeader = [DateTime]::UtcNow.ToString("R")
+$contentLength = [System.Text.Encoding]::UTF8.GetByteCount($staticWebsiteXml)
+
+# Canonicalized headers and resource for Shared Key auth
+$canonicalizedHeaders = "x-ms-date:$dateHeader`nx-ms-version:2023-11-03"
+$canonicalizedResource = "/$StorageAccountName/`ncomp:properties`nrestype:service"
+$stringToSign = "PUT`n`n`n$contentLength`n`napplication/xml`n`n`n`n`n`n`n$canonicalizedHeaders`n$canonicalizedResource"
+
+$hmacsha256 = [System.Security.Cryptography.HMACSHA256]::new([Convert]::FromBase64String($storageKey))
+$signatureBytes = $hmacsha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($stringToSign))
+$signature = [Convert]::ToBase64String($signatureBytes)
+$hmacsha256.Dispose()
+
+$storageHeaders = @{
+    Authorization    = "SharedKey ${StorageAccountName}:$signature"
+    "x-ms-date"     = $dateHeader
+    "x-ms-version"  = "2023-11-03"
+    "Content-Type"  = "application/xml"
+}
+
+try {
+    Invoke-RestMethod -Uri $blobServiceUri -Method PUT -Headers $storageHeaders -Body $staticWebsiteXml | Out-Null
+    Write-Success "Static website enabled"
+} catch {
+    Write-Warning "Failed to enable static website via data plane: $_"
+    Write-Info "You may need to enable it manually in the Azure portal"
+}
+
+# Get the static website endpoint URL
+$saGetResponse = Invoke-AzRestMethod -Method GET -Path $saUri
+if ($saGetResponse.StatusCode -eq 200) {
+    $saGetData = $saGetResponse.Content | ConvertFrom-Json
+    $webEndpoint = $saGetData.properties.primaryEndpoints.web
+    if ($webEndpoint) {
+        $staticWebsiteHostname = ($webEndpoint -replace 'https?://', '').TrimEnd('/')
+        Write-Success "Static website URL: http://$staticWebsiteHostname"
+    } else {
+        Write-Warning "Static website endpoint not yet available - it may take a moment to propagate"
+        # Fallback: construct approximate URL (zone number unknown)
+        $staticWebsiteHostname = "$StorageAccountName.z0.web.core.windows.net"
+        Write-Info "Estimated endpoint: http://$staticWebsiteHostname (verify in Azure portal)"
+    }
+}
+
+# Set CRL URL based on whether custom hostname was provided
+if ($CrlHostname) {
+    Write-Info "CRL will be published to: $crlUrl"
+    Write-Info "CNAME required: $CrlHostname -> $staticWebsiteHostname"
+} else {
+    $crlUrl = "http://$staticWebsiteHostname/$crlFileName"
+    Write-Info "CRL URL: $crlUrl"
+}
+
+Write-StepHeader "Step $($stepNum): Root CA Certificate"
+$stepNum++
 
 $certName = "gsa-tls-root-ca"
 
@@ -1142,7 +1577,8 @@ try {
     }
 }
 
-Write-StepHeader "Step $(if ($LogAnalyticsWorkspaceId -or $EnableDefender) { 7 } else { 5 }): Global Secure Access CSR"
+Write-StepHeader "Step $($stepNum): Global Secure Access CSR"
+$stepNum++
 
 # Check for existing GSA certificates
 $gsaCertId = $null
@@ -1235,16 +1671,20 @@ $csrPath = Join-Path $env:TEMP "gsa-tls-csr-$(Get-Date -Format 'yyyyMMdd-HHmmss'
 $csrPem | Out-File -FilePath $csrPath -Encoding ASCII
 Write-Verbose "CSR saved to: $csrPath"
 
-Write-StepHeader "Step $(if ($LogAnalyticsWorkspaceId -or $EnableDefender) { 8 } else { 6 }): Sign Certificate (Key Vault)"
+Write-StepHeader "Step $($stepNum): Sign Certificate (Key Vault)"
+$stepNum++
 
 Write-Host "  Private key remains in Key Vault (never exported)" -ForegroundColor Green
 
 try {
-    $signedCertResult = New-SignedCertificateFromCSR `
-        -CsrPem $csrPem `
-        -IssuerCert $rootCertInfo.Certificate `
-        -KeyVaultName $KeyVaultName `
-        -KeyVaultKeyId $rootCertInfo.KeyId
+    $signParams = @{
+        CsrPem       = $csrPem
+        IssuerCert   = $rootCertInfo.Certificate
+        KeyVaultName = $KeyVaultName
+        KeyVaultKeyId = $rootCertInfo.KeyId
+        CrlDistributionPointUrl = $crlUrl
+    }
+    $signedCertResult = New-SignedCertificateFromCSR @signParams
     
     Write-Success "Certificate signed successfully"
     Write-Info "Thumbprint: $($signedCertResult.Thumbprint)"
@@ -1273,7 +1713,8 @@ try {
     exit 1
 }
 
-Write-StepHeader "Step $(if ($LogAnalyticsWorkspaceId -or $EnableDefender) { 9 } else { 7 }): Upload to Global Secure Access"
+Write-StepHeader "Step $($stepNum): Upload to Global Secure Access"
+$stepNum++
 
 Write-Host "  Uploading signed certificate and chain..." -ForegroundColor Yellow
 
@@ -1313,7 +1754,82 @@ try {
     exit 1
 }
 
-Write-StepHeader "Step $(if ($LogAnalyticsWorkspaceId -or $EnableDefender) { 10 } else { 8 }): Intune Trusted Root Policies"
+# Generate and upload CRL
+Write-StepHeader "Step $($stepNum): CRL Generation & Upload"
+$stepNum++
+
+try {
+    # Generate empty CRL signed by Key Vault
+    [byte[]]$crlBytes = New-CrlFromKeyVault `
+        -IssuerCert $rootCertInfo.Certificate `
+        -KeyVaultKeyId $rootCertInfo.KeyId `
+        -CrlNumber 1 `
+        -NextUpdateDays 30
+    
+    # Upload CRL to storage account $web container
+    Write-Host "  Uploading CRL to storage account..." -ForegroundColor Yellow
+    
+    $blobUri = "https://$StorageAccountName.blob.core.windows.net/`$web/$crlFileName"
+    $dateHeader = [DateTime]::UtcNow.ToString("R")
+    $contentLength = $crlBytes.Length
+    
+    # Build Shared Key authorization for blob upload
+    $canonicalizedHeaders = "x-ms-blob-type:BlockBlob`nx-ms-date:$dateHeader`nx-ms-version:2023-11-03"
+    $canonicalizedResource = "/$StorageAccountName/`$web/$crlFileName"
+    # Format: VERB\nContent-Encoding\nContent-Language\nContent-Length\nContent-MD5\nContent-Type\nDate\nIf-Modified-Since\nIf-Match\nIf-None-Match\nIf-Unmodified-Since\nRange\nCanonicalizedHeaders\nCanonicalizedResource
+    $stringToSign = "PUT`n`n`n$contentLength`n`napplication/pkix-crl`n`n`n`n`n`n`n$canonicalizedHeaders`n$canonicalizedResource"
+    
+    $hmacsha256 = [System.Security.Cryptography.HMACSHA256]::new([Convert]::FromBase64String($storageKey))
+    $signatureBytes = $hmacsha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($stringToSign))
+    $signature = [Convert]::ToBase64String($signatureBytes)
+    $hmacsha256.Dispose()
+    
+    $blobHeaders = @{
+        Authorization    = "SharedKey ${StorageAccountName}:$signature"
+        "x-ms-date"     = $dateHeader
+        "x-ms-version"  = "2023-11-03"
+        "x-ms-blob-type" = "BlockBlob"
+        "Content-Type"  = "application/pkix-crl"
+    }
+    
+    Invoke-RestMethod -Uri $blobUri -Method PUT -Headers $blobHeaders -Body $crlBytes | Out-Null
+    Write-Success "CRL uploaded to: http://$staticWebsiteHostname/$crlFileName"
+    
+    # Save CRL locally for verification
+    $crlLocalPath = Join-Path $env:TEMP "gsa-tls-root-ca-$(Get-Date -Format 'yyyyMMdd-HHmmss').crl"
+    [System.IO.File]::WriteAllBytes($crlLocalPath, $crlBytes)
+    Write-Verbose "CRL saved locally: $crlLocalPath"
+    Write-Info "Verify with: openssl crl -in '$crlLocalPath' -inform DER -text -noout"
+    
+    # Verify CRL is accessible via storage static website URL
+    Write-Host "  Verifying CRL is accessible via storage endpoint..." -ForegroundColor Gray
+    $storageUrl = "http://$staticWebsiteHostname/$crlFileName"
+    $verifyAttempts = 0
+    $crlAccessible = $false
+    while (-not $crlAccessible -and $verifyAttempts -lt 6) {
+        $verifyAttempts++
+        try {
+            $verifyResp = Invoke-WebRequest -Uri $storageUrl -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+            if ($verifyResp.StatusCode -eq 200) {
+                $crlAccessible = $true
+                Write-Success "CRL accessible at: $storageUrl ($($verifyResp.Content.Length) bytes)"
+            }
+        } catch {
+            Write-Host "." -NoNewline -ForegroundColor Gray
+            Start-Sleep -Seconds 5
+        }
+    }
+    if (-not $crlAccessible) {
+        Write-Warning "CRL not yet accessible at $storageUrl — static website may need a moment to propagate"
+    }
+    
+} catch {
+    Write-Warning "Failed to generate or upload CRL: $_"
+    Write-Info "You can generate and upload the CRL manually later"
+}
+
+Write-StepHeader "Step $($stepNum): Intune Trusted Root Policies"
+$stepNum++
 
 # Get root certificate as base64 (without PEM headers)
 $rootCertBase64 = [Convert]::ToBase64String($rootCertInfo.Certificate.RawData)
@@ -1334,6 +1850,177 @@ foreach ($platform in $platforms) {
 }
 
 Write-Host "`n  Created $($intunePolicyIds.Count) of $($platforms.Count) policies" -ForegroundColor $(if ($intunePolicyIds.Count -eq $platforms.Count) { 'Green' } else { 'Yellow' })
+
+# Validate CNAME resolution if custom hostname was provided — last step so user can set up DNS during earlier steps
+$cnameResolved = $false
+$httpVerified = $false
+
+# Helper: resolve CNAME trying local DNS first, then public resolvers as fallback
+function Resolve-CnameWithFallback {
+    param([string]$Hostname)
+    $resolvers = @($null, '1.1.1.1', '8.8.8.8')  # $null = local/default resolver
+    foreach ($server in $resolvers) {
+        try {
+            $params = @{ Name = $Hostname; Type = 'CNAME'; DnsOnly = $true; ErrorAction = 'Stop' }
+            if ($server) { $params['Server'] = $server }
+            $result = Resolve-DnsName @params
+            $target = ($result | Where-Object { $_.QueryType -eq 'CNAME' }).NameHost
+            if ($target) {
+                $source = if ($server) { $server } else { 'local' }
+                return [PSCustomObject]@{ Target = $target; Resolver = $source }
+            }
+        } catch {
+            # Try next resolver
+        }
+    }
+    return $null
+}
+
+if ($CrlHostname) {
+    Write-StepHeader "Step $($stepNum): DNS CNAME Validation"
+    $stepNum++
+    
+    Write-Host ""
+    Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Yellow
+    Write-Host "  │  DNS CNAME Configuration Required                            │" -ForegroundColor Yellow
+    Write-Host "  │                                                              │" -ForegroundColor Yellow
+    Write-Host "  │  Create the following CNAME record in your DNS provider:     │" -ForegroundColor Yellow
+    Write-Host "  │                                                              │" -ForegroundColor Yellow
+    Write-Host "  │    Name:   $($CrlHostname.PadRight(48)) │" -ForegroundColor Cyan
+    Write-Host "  │    Type:   CNAME                                             │" -ForegroundColor Cyan
+    Write-Host "  │    Value:  $($staticWebsiteHostname.PadRight(48)) │" -ForegroundColor Cyan
+    Write-Host "  │                                                              │" -ForegroundColor Yellow
+    Write-Host "  │  The script will wait and verify DNS resolution.             │" -ForegroundColor Yellow
+    Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor Yellow
+    Write-Host ""
+    
+    # Check if CNAME already resolves (user may have pre-configured it)
+    $dnsLookup = Resolve-CnameWithFallback -Hostname $CrlHostname
+    if ($dnsLookup) {
+        Write-Success "CNAME already configured: $CrlHostname -> $($dnsLookup.Target) (via $($dnsLookup.Resolver))"
+        $cnameResolved = $true
+        if ($dnsLookup.Target.TrimEnd('.') -ne $staticWebsiteHostname) {
+            Write-Warning "CNAME target '$($dnsLookup.Target)' does not match expected '$staticWebsiteHostname'"
+            Write-Info "The CRL may not be accessible via the custom hostname"
+        }
+    } else {
+        Write-Info "CNAME not yet configured. Waiting for you to create the DNS record..."
+    }
+    
+    if (-not $cnameResolved) {
+        # Poll for CNAME resolution with user-friendly countdown
+        $maxWaitMinutes = 10
+        $pollIntervalSec = 15
+        $maxPolls = ($maxWaitMinutes * 60) / $pollIntervalSec
+        $pollCount = 0
+        $startTime = Get-Date
+        
+        Write-Host "  Checking DNS every ${pollIntervalSec}s (timeout: ${maxWaitMinutes} min)..." -ForegroundColor Gray
+        Write-Host "  Press Ctrl+C to skip DNS validation and continue." -ForegroundColor Gray
+        Write-Host ""
+        
+        while (-not $cnameResolved -and $pollCount -lt $maxPolls) {
+            $pollCount++
+            $elapsed = [math]::Round(((Get-Date) - $startTime).TotalSeconds)
+            Write-Host "`r  ⏳ Waiting for DNS... (${elapsed}s elapsed) " -NoNewline -ForegroundColor Gray
+            
+            $dnsLookup = Resolve-CnameWithFallback -Hostname $CrlHostname
+            if ($dnsLookup) {
+                Write-Host ""
+                Write-Success "CNAME resolved: $CrlHostname -> $($dnsLookup.Target) (via $($dnsLookup.Resolver))"
+                $cnameResolved = $true
+                
+                if ($dnsLookup.Target.TrimEnd('.') -ne $staticWebsiteHostname) {
+                    Write-Warning "CNAME target '$($dnsLookup.Target)' does not match expected '$staticWebsiteHostname'"
+                }
+            }
+            
+            # Always sleep between polls (unless CNAME just resolved)
+            if (-not $cnameResolved) {
+                Start-Sleep -Seconds $pollIntervalSec
+            }
+        }
+        
+        if (-not $cnameResolved) {
+            Write-Host ""
+            Write-Warning "DNS validation timed out after $maxWaitMinutes minutes"
+            Write-Info "You can verify manually later: nslookup $CrlHostname"
+        }
+    }
+    
+    # If CNAME resolved, register the custom domain on the storage account then verify HTTP
+    if ($cnameResolved) {
+        # Register custom domain so Azure Storage accepts requests with the custom Host header
+        Write-Host "  Registering custom domain on storage account..." -ForegroundColor Yellow
+        try {
+            $customDomainBody = @{
+                properties = @{
+                    customDomain = @{
+                        name = $CrlHostname
+                        useSubDomainName = $false
+                    }
+                }
+            } | ConvertTo-Json -Depth 4
+            
+            $regResult = Invoke-AzRestMethod -Method PATCH `
+                -Path "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Storage/storageAccounts/$StorageAccountName`?api-version=2023-05-01" `
+                -Payload $customDomainBody
+            
+            if ($regResult.StatusCode -in 200, 202) {
+                Write-Success "Custom domain registered: $CrlHostname"
+            } else {
+                $regError = ($regResult.Content | ConvertFrom-Json -ErrorAction SilentlyContinue).error.message
+                Write-Warning "Custom domain registration returned $($regResult.StatusCode): $regError"
+                Write-Info "You can register manually: Set-AzStorageAccount -ResourceGroupName $ResourceGroupName -Name $StorageAccountName -CustomDomainName $CrlHostname -UseSubDomain `$false"
+            }
+        } catch {
+            Write-Warning "Failed to register custom domain: $_"
+            Write-Info "You can register manually: Set-AzStorageAccount -ResourceGroupName $ResourceGroupName -Name $StorageAccountName -CustomDomainName $CrlHostname -UseSubDomain `$false"
+        }
+        
+        # Brief pause for registration to take effect
+        Start-Sleep -Seconds 3
+        
+        # Verify CRL is accessible via custom hostname
+        Write-Host "  Verifying CRL is accessible via custom hostname..." -ForegroundColor Gray
+        $customUrl = "http://$CrlHostname/$crlFileName"
+        $httpAttempts = 0
+        
+        # Allow a few retries since DNS propagation and HTTP routing may lag
+        while (-not $httpVerified -and $httpAttempts -lt 6) {
+            $httpAttempts++
+            try {
+                $httpResp = Invoke-WebRequest -Uri $customUrl -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                if ($httpResp.StatusCode -eq 200) {
+                    $httpVerified = $true
+                    Write-Success "CRL verified at: $customUrl ($($httpResp.Content.Length) bytes)"
+                    
+                    # Validate content-type
+                    $contentType = $httpResp.Headers['Content-Type']
+                    if ($contentType -eq 'application/pkix-crl') {
+                        Write-Success "Content-Type: application/pkix-crl"
+                    } else {
+                        Write-Warning "Unexpected Content-Type: $contentType (expected application/pkix-crl)"
+                    }
+                }
+            } catch {
+                if ($httpAttempts -lt 6) {
+                    Write-Host "." -NoNewline -ForegroundColor Gray
+                    Start-Sleep -Seconds 5
+                }
+            }
+        }
+        
+        if (-not $httpVerified) {
+            Write-Warning "CRL not accessible at $customUrl"
+            Write-Info "DNS resolved but HTTP request failed — this may resolve with time"
+            Write-Info "The CRL is accessible directly at: http://$staticWebsiteHostname/$crlFileName"
+        }
+    } else {
+        Write-Info "Skipping HTTP verification (CNAME not resolved)"
+        Write-Info "The CRL is accessible directly at: http://$staticWebsiteHostname/$crlFileName"
+    }
+}
 
 # Final Output
 Write-Host "`n╔════════════════════════════════════════════════════════════════╗" -ForegroundColor Green
@@ -1358,6 +2045,12 @@ $result = [PSCustomObject]@{
     RootCAExpiration = $rootCertInfo.Expiration
     IntermediateCertThumbprint = $signedCertResult.Thumbprint
     
+    # CRL
+    CrlUrl = $crlUrl
+    CrlHostname = $CrlHostname
+    StorageAccountName = $StorageAccountName
+    StaticWebsiteHostname = $staticWebsiteHostname
+    
     # GSA
     GSACertificateId = $gsaCertId
     GSACertificateName = $csrResponse.name
@@ -1377,10 +2070,15 @@ $result = [PSCustomObject]@{
             "2. Verify Intune policy deployment to devices"
         }
         "3. Enable TLS inspection for test users/groups in GSA portal"
-        if ($LogAnalyticsWorkspaceId) {
-            "4. Monitor Key Vault audit logs in Log Analytics"
+        if ($CrlHostname -and -not ($cnameResolved -and $httpVerified)) {
+            "4. Create DNS CNAME record: $CrlHostname -> $staticWebsiteHostname"
+            "5. Verify CRL is accessible: curl http://$CrlHostname/$crlFileName"
         }
-        "5. Set calendar reminder for Root CA renewal (expires: $($rootCertInfo.Expiration.ToString('yyyy-MM-dd')))"
+        "$(if ($CrlHostname) { 6 } else { 4 }). Plan CRL renewal before nextUpdate (30 days from now)"
+        if ($LogAnalyticsWorkspaceId) {
+            "$(if ($CrlHostname) { 7 } else { 5 }). Monitor Key Vault audit logs in Log Analytics"
+        }
+        "$(if ($CrlHostname -and $LogAnalyticsWorkspaceId) { 8 } elseif ($CrlHostname -or $LogAnalyticsWorkspaceId) { 6 } else { 5 }). Set calendar reminder for Root CA renewal (expires: $($rootCertInfo.Expiration.ToString('yyyy-MM-dd')))"
     )
 }
 
@@ -1390,10 +2088,34 @@ Write-Host "  Root CA:          $($rootCertInfo.Thumbprint)" -ForegroundColor Wh
 Write-Host "  Expires:          $($rootCertInfo.Expiration.ToString('yyyy-MM-dd'))" -ForegroundColor White
 Write-Host "  GSA Certificate:  $($csrResponse.name)" -ForegroundColor White
 Write-Host "  Intune Policies:  $($intunePolicyIds.Count) created" -ForegroundColor White
+Write-Host "  CRL URL:          $crlUrl" -ForegroundColor White
+Write-Host "  Storage Account:  $StorageAccountName" -ForegroundColor White
 
 Write-Host "`n🔗 Quick Links:" -ForegroundColor Cyan
 Write-Host "  GSA TLS Settings: $($result.GSAPortalLink)" -ForegroundColor Blue
 Write-Host "  Key Vault:        https://portal.azure.com/#@/resource$($result.KeyVaultResourceId)" -ForegroundColor Blue
+Write-Host "  Storage Account:  https://portal.azure.com/#@/resource/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Storage/storageAccounts/$StorageAccountName" -ForegroundColor Blue
+
+if ($CrlHostname) {
+    if ($cnameResolved -and $httpVerified) {
+        Write-Host "`n✅ DNS CNAME Validated:" -ForegroundColor Green
+        Write-Host "  $CrlHostname  ->  $staticWebsiteHostname" -ForegroundColor Cyan
+        Write-Host "  CRL accessible at: http://$CrlHostname/$crlFileName" -ForegroundColor Cyan
+    } elseif ($cnameResolved) {
+        Write-Host "`n⚠️  DNS CNAME Resolved (HTTP verification pending):" -ForegroundColor Yellow
+        Write-Host "  $CrlHostname  ->  $staticWebsiteHostname" -ForegroundColor Cyan
+        Write-Host "  Verify CRL access: curl http://$CrlHostname/$crlFileName" -ForegroundColor Cyan
+        Write-Host "  Direct fallback:   http://$staticWebsiteHostname/$crlFileName" -ForegroundColor Cyan
+    } else {
+        Write-Host "`n⚠️  DNS Configuration Still Required:" -ForegroundColor Yellow
+        Write-Host "  Create a CNAME record in your DNS:" -ForegroundColor White
+        Write-Host "    $CrlHostname  CNAME  $staticWebsiteHostname" -ForegroundColor Cyan
+        Write-Host "  Then verify the CRL is accessible:" -ForegroundColor White
+        Write-Host "    curl http://$CrlHostname/$crlFileName" -ForegroundColor Cyan
+        Write-Host "  Until DNS is configured, the CRL is available at:" -ForegroundColor White
+        Write-Host "    http://$staticWebsiteHostname/$crlFileName" -ForegroundColor Cyan
+    }
+}
 
 Write-Host "`n📌 Next Steps:" -ForegroundColor Cyan
 $result.NextSteps | ForEach-Object { Write-Host "  $_" -ForegroundColor White }
