@@ -82,13 +82,33 @@ This creates:
 - Azure Key Vault with Premium SKU (HSM-backed)
 - Self-signed root CA certificate (10 years, RSA 4096)
 - GSA intermediate certificate (5 years)
+- Azure Storage account with static website for CRL hosting
+- CRL Distribution Point with the root CA's revocation list
 - 4 Intune policies to deploy root certificate to all platforms
+
+### Custom CRL Hostname
+
+```powershell
+.\Initialize-GSATLSInspection.ps1 `
+    -OrganizationName "ShareMyLabs" `
+    -CrlHostname "crl.sharemylabs.com" `
+    -Verbose
+```
+
+When `-CrlHostname` is provided:
+- The CDP URL in certificates uses your custom hostname (e.g., `http://crl.sharemylabs.com/gsa-tls-root-ca.crl`)
+- Script outputs CNAME instructions to map the hostname to the Azure Storage static website
+- After you create the CNAME, the script validates DNS resolution (with fallback to Cloudflare 1.1.1.1 and Google 8.8.8.8)
+- Registers the custom domain on the storage account for proper HTTP routing
+
+Without `-CrlHostname`, the CDP URL uses the Azure Storage static website URL directly.
 
 ### Production Setup with Monitoring
 
 ```powershell
 .\Initialize-GSATLSInspection.ps1 `
     -OrganizationName "ShareMyLabs" `
+    -CrlHostname "crl.sharemylabs.com" `
     -LogAnalyticsWorkspaceId "/subscriptions/.../workspaces/security-logs" `
     -EnableDefender `
     -Verbose
@@ -122,7 +142,16 @@ This creates:
 - Diagnostic logging for all key operations
 - Detailed output for tracking and reporting
 
-### 📱 Multi-Platform Support
+### � CRL Distribution Point
+
+- **Automatic CRL generation**: Empty CRL signed by the root CA via Key Vault (30-day validity)
+- **Azure Storage static website**: CRL hosted on a StorageV2 account with HTTP access (no HTTPS — per RFC 5280, CRLs are cryptographically signed so transport security is unnecessary and HTTPS would create circular dependency)
+- **CDP extension**: All signed certificates include a CRL Distribution Point extension pointing to the hosted CRL
+- **Custom hostname support**: Optional `-CrlHostname` parameter for branded CRL URLs
+- **DNS validation with fallback**: CNAME resolution tries local DNS → Cloudflare (1.1.1.1) → Google (8.8.8.8)
+- **Custom domain registration**: Automatically registers the CNAME on the storage account for proper HTTP routing
+
+### �📱 Multi-Platform Support
 
 Creates 4 Intune policies:
 - Windows (Trusted Root Certification Authorities)
@@ -140,6 +169,8 @@ Creates 4 Intune policies:
 | `Location` | `eastus` | Azure region |
 | `LogAnalyticsWorkspaceId` | None | Enable audit logs (full resource ID) |
 | `EnableDefender` | False | Enable Defender for Key Vault |
+| `CrlHostname` | None | Custom hostname for CRL Distribution Point (e.g., `crl.contoso.com`) |
+| `StorageAccountName` | Auto-derived | Azure Storage Account name for CRL hosting (3-24 chars, lowercase + numbers) |
 | `AssignIntunePolicies` | False | Assign to All Devices (not recommended; manual assignment to groups preferred) |
 | `Force` | False | Recreate existing resources |
 
@@ -149,17 +180,29 @@ Creates 4 Intune policies:
    - Navigate to: [TLS Inspection Settings](https://entra.microsoft.com/#view/Microsoft_Azure_Network_Access/TLSInspectionPolicy.ReactView)
    - Confirm certificate status: **Enabled**
 
-2. **Assign Intune Policies** (default - manual assignment required)
+2. **Verify CRL Distribution Point**
+   ```powershell
+   # Check CRL is accessible (use your storage URL or custom hostname)
+   Invoke-WebRequest -Uri "http://<storage-or-custom-hostname>/gsa-tls-root-ca.crl" -UseBasicParsing
+   ```
+   - Verify HTTP 200 with `Content-Type: application/pkix-crl`
+
+3. **Create CNAME Record** (if using `-CrlHostname`)
+   - Create a CNAME DNS record mapping your custom hostname to the storage static website URL
+   - Example: `crl.contoso.com` → `sagsacrlcontoso.z13.web.core.windows.net`
+   - The script will validate the CNAME and register the custom domain on the storage account
+
+4. **Assign Intune Policies** (default - manual assignment required)
    - Intune → Devices → Configuration
    - Assign "GSA TLS Root Certificate" policies to appropriate device groups
    - **Best Practice**: Target specific pilot groups first, then expand to production
    - **Note**: Use `-AssignIntunePolicies` switch only for testing environments if you want automatic "All Devices" assignment
 
-3. **Enable TLS Inspection**
+5. **Enable TLS Inspection**
    - Global Secure Access → Secure → TLS inspection policies
    - Create policy scoped to pilot / production users
 
-4. **Verify Deployment**
+6. **Verify Deployment**
    ```powershell
    # Windows
    Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Subject -like "*Global Secure Access*" }
@@ -185,6 +228,17 @@ Creates 4 Intune policies:
 - Verify `DeviceManagementConfiguration.ReadWrite.All` permission
 - Check Intune licensing
 - Review Graph API error details in verbose output
+
+**CNAME Not Resolving for Custom CRL Hostname**
+- Verify CNAME record is created at your DNS provider
+- Allow time for DNS propagation (up to 5 minutes)
+- The script tries local DNS, then falls back to Cloudflare (1.1.1.1) and Google (8.8.8.8)
+- You can cancel CNAME validation and create the record later — all other resources are already provisioned
+
+**CRL HTTP 400 Error**
+- The custom domain must be registered on the Azure Storage account
+- The script handles this automatically after CNAME validation
+- If done manually: set the custom domain on the storage account via Azure Portal → Storage account → Networking → Custom domain
 
 **TLS Inspection Not Working**
 - Allow at least 60 min for Intune certificate deployment
@@ -227,24 +281,25 @@ Remove-AzKeyVault -VaultName "kv-name" -Location "eastus" -InRemovedState -Force
 │  │  - Private key never leaves HSM           │  │
 │  └───────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────┐
-│       Global Secure Access TLS Service          │
-│  ┌───────────────────────────────────────────┐  │
-│  │  Intermediate Certificate                 │  │
-│  │  - Signed by root CA                      │  │
-│  │  - Validity: 5 years                      │  │
-│  │  - Extensions: CA=true, pathLen=0         │  │
-│  │  - EKU: serverAuth                        │  │
-│  │  - Status: Enabled                        │  │
-│  └───────────────────────────────────────────┘  │
-│                       │                         │
-│                       ▼                         │
-│  Issues leaf certificates for intercepted HTTPS │
-└─────────────────────────────────────────────────┘
-                       │
-                       ▼
+              │                    │
+              ▼                    ▼
+┌──────────────────────────┐ ┌──────────────────────────┐
+│   GSA TLS Service        │ │  Azure Storage (CRL)     │
+│  ┌────────────────────┐  │ │  ┌────────────────────┐  │
+│  │ Intermediate Cert   │  │ │  │ Static Website     │  │
+│  │ - Signed by root   │  │ │  │ - gsa-tls-root-    │  │
+│  │ - Validity: 5 yrs  │  │ │  │   ca.crl           │  │
+│  │ - CA=true, pL=0    │  │ │  │ - HTTP only (5280) │  │
+│  │ - EKU: serverAuth  │  │ │  │ - 30-day validity  │  │
+│  │ - CDP: CRL URL     │  │ │  │ - Custom hostname  │  │
+│  └────────────────────┘  │ │  │   (optional)       │  │
+│           │              │ │  └────────────────────┘  │
+│           ▼              │ └──────────────────────────┘
+│  Issues leaf certs for   │
+│  intercepted HTTPS       │
+└──────────────────────────┘
+              │
+              ▼
 ┌─────────────────────────────────────────────────┐
 │        Microsoft Intune (4 Policies)            │
 │  - Windows: Trusted Root CA                     │
@@ -332,6 +387,16 @@ The GSA intermediate has a 5-year validity. Renew 1 year early:
 
 GSA automatically begins issuing new leaf certificates using the updated intermediate.
 
+### CRL Renewal (every 30 days)
+
+The CRL has a 30-day validity (`NextUpdate`). Re-run the script to generate and upload a fresh CRL:
+
+```powershell
+.\Initialize-GSATLSInspection.ps1 -OrganizationName "ShareMyLabs"
+```
+
+The script detects existing resources and only regenerates the CRL. Consider scheduling this via Azure Automation or a pipeline.
+
 ## Additional Resources
 
 - [Global Secure Access TLS Inspection Docs](https://learn.microsoft.com/en-us/entra/global-secure-access/how-to-transport-layer-security-settings)
@@ -362,6 +427,14 @@ GSA automatically begins issuing new leaf certificates using the updated interme
    Key:          RSA 4096 (Non-exportable)
    Validity:     2026-02-10 → 2036-02-10 (10 years)
 
+✓ Azure Storage (CRL Hosting)
+   Account:      sagsacrlsharemylabs
+   Static Web:   http://sagsacrlsharemylabs.z13.web.core.windows.net
+   CRL URL:      http://crl.sharemylabs.com/gsa-tls-root-ca.crl
+   CRL Size:     698 bytes
+   Content-Type: application/pkix-crl
+   Next Update:  2026-03-12 (30-day validity)
+
 ✓ Global Secure Access
    Certificate:  Enabled
    Thumbprint:   X7Y8Z9A1B2C3...
@@ -373,6 +446,13 @@ GSA automatically begins issuing new leaf certificates using the updated interme
    macOS:        35c1d9e8-... (Not assigned - manual assignment required)
    iOS:          46d2e0f9-... (Not assigned - manual assignment required)
    Android:      57e3f1g0-... (Not assigned - manual assignment required)
+
+✓ DNS CNAME Validated
+   Hostname:     crl.sharemylabs.com
+   Target:       sagsacrlsharemylabs.z13.web.core.windows.net
+   Resolver:     Cloudflare (1.1.1.1)
+   Custom Domain: Registered
+   CRL Verified:  HTTP 200, application/pkix-crl
 
 Next Steps:
   1. Verify certificate in GSA portal (status should be "Enabled")
