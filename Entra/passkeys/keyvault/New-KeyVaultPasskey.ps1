@@ -658,7 +658,6 @@ $challenge = $creationOptions.publicKey.challenge
 $rpId = $creationOptions.publicKey.rp.id
 $userId = $creationOptions.publicKey.user.id
 $userName = $creationOptions.publicKey.user.name
-$userDisplayName = $creationOptions.publicKey.user.displayName
 
 Write-Host "  ✓ Challenge received for $userName" -ForegroundColor Green
 

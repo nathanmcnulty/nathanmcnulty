@@ -82,17 +82,21 @@
     Required for manual Key Vault authentication (without JSON file).
     Can override value from JSON file.
 
+.PARAMETER KeyVaultAccessToken
+    Pre-obtained access token for Azure Key Vault (audience: https://vault.azure.net).
+    When provided, skips all other token acquisition methods.
+
 .PARAMETER KeyVaultClientId
     Service principal client ID for Key Vault authentication.
-    Required when using Key Vault-backed passkeys.
+    Optional — used only if Az module, Azure CLI, and -KeyVaultAccessToken are unavailable.
 
 .PARAMETER KeyVaultClientSecret
     Service principal client secret for Key Vault authentication.
-    Required when using Key Vault-backed passkeys.
+    Optional — used only if Az module, Azure CLI, and -KeyVaultAccessToken are unavailable.
 
 .PARAMETER KeyVaultTenantId
-    Tenant ID for Key Vault authentication.
-    Required when using Key Vault-backed passkeys.
+    Tenant ID for Key Vault service principal authentication.
+    Also used to scope Azure CLI token requests when provided.
 
 .PARAMETER PassThru
     Output authentication result as PSCustomObject for pipeline support.
@@ -110,9 +114,21 @@
     Note: PrivateKey must be provided as a SecureString.
 
 .EXAMPLE
-    .\PasskeyLogin.ps1 -UserPrincipalName user@domain.com -UserHandle "base64handle" -CredentialId "base64id" -KeyVaultName "my-keyvault" -KeyVaultKeyName "passkey-key" -KeyVaultClientId "clientid" -KeyVaultClientSecret $secret -KeyVaultTenantId "tenantid"
-    
-    Authenticate using manual parameters with a Key Vault-backed private key.
+    .\PasskeyLogin.ps1 -KeyFilePath .\passkey.json
+
+    Authenticate using a Key Vault-backed passkey. Token acquired automatically via
+    Az PowerShell module (Connect-AzAccount) or Azure CLI (az login).
+
+.EXAMPLE
+    $token = az account get-access-token --resource https://vault.azure.net --query accessToken -o tsv
+    .\PasskeyLogin.ps1 -KeyFilePath .\passkey.json -KeyVaultAccessToken $token
+
+    Authenticate with a pre-obtained Key Vault access token.
+
+.EXAMPLE
+    .\PasskeyLogin.ps1 -KeyFilePath .\passkey.json -KeyVaultClientId "clientid" -KeyVaultClientSecret $secret -KeyVaultTenantId "tenantid"
+
+    Authenticate using a service principal for Key Vault access.
 
 .EXAMPLE
     $auth = .\PasskeyLogin.ps1 -KeyFilePath .\passkey.json -PassThru
@@ -176,14 +192,17 @@ param (
     [string]$KeyVaultKeyName,
     
     [Parameter(Mandatory = $false)]
+    [string]$KeyVaultAccessToken,
+
+    [Parameter(Mandatory = $false)]
     [string]$KeyVaultClientId,
-    
+
     [Parameter(Mandatory = $false)]
     [string]$KeyVaultClientSecret,
-    
+
     [Parameter(Mandatory = $false)]
     [string]$KeyVaultTenantId,
-    
+
     [Parameter(Mandatory = $false)]
     [switch]$PassThru
 )
@@ -263,37 +282,86 @@ function ConvertFrom-IeeeToDer {
 
 function Get-KeyVaultToken {
     param(
+        [string]$AccessToken,
         [string]$TenantId,
         [string]$ClientId,
         [string]$ClientSecret
     )
-    
-    $tokenUrl = "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/token"
-    $tokenBody = @{
-        grant_type    = "client_credentials"
-        client_id     = $ClientId
-        client_secret = $ClientSecret
-        scope         = "https://vault.azure.net/.default"
+
+    # Option 1: Pre-obtained access token
+    if ($AccessToken) {
+        Write-Host "    ✓ Using provided -KeyVaultAccessToken" -ForegroundColor Green
+        return $AccessToken
     }
-    
-    try {
-        $response = Invoke-RestMethod -Uri $tokenUrl -Method POST -Body $tokenBody -ContentType "application/x-www-form-urlencoded"
-        return $response.access_token
-    } catch {
-        $statusCode = $_.Exception.Response.StatusCode.value__
-        $errorMessage = if ($_.ErrorDetails.Message) { 
-            try { ($_.ErrorDetails.Message | ConvertFrom-Json).error_description } catch { $_.ErrorDetails.Message }
-        } else { 
-            $_.Exception.Message 
+
+    # Option 2: Az PowerShell module
+    if (Get-Command Get-AzAccessToken -ErrorAction SilentlyContinue) {
+        try {
+            Write-Verbose "Trying Az PowerShell module..."
+            $azToken = Get-AzAccessToken -ResourceUrl "https://vault.azure.net" -ErrorAction Stop
+            $token = if ($azToken.Token -is [System.Security.SecureString]) {
+                [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+                    [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($azToken.Token))
+            } else { $azToken.Token }
+            Write-Host "    ✓ Acquired Key Vault token via Az PowerShell module" -ForegroundColor Green
+            return $token
+        } catch {
+            Write-Verbose "Az module token acquisition failed: $($_.Exception.Message)"
         }
-        
-        Write-Error "Failed to acquire Key Vault token (HTTP $statusCode): $errorMessage"
-        
-        if ($statusCode -eq 401 -or $statusCode -eq 400) {
-            Write-Host "  → Check ClientId, ClientSecret, and TenantId are correct" -ForegroundColor Yellow
-        }
-        throw
     }
+
+    # Option 3: Azure CLI
+    if (Get-Command az -ErrorAction SilentlyContinue) {
+        try {
+            Write-Verbose "Trying Azure CLI..."
+            $cliArgs = @("account", "get-access-token", "--resource", "https://vault.azure.net", "--output", "json")
+            if ($TenantId) { $cliArgs += @("--tenant", $TenantId) }
+            $cliResult = & az @cliArgs 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $token = ($cliResult | ConvertFrom-Json).accessToken
+                Write-Host "    ✓ Acquired Key Vault token via Azure CLI" -ForegroundColor Green
+                return $token
+            }
+        } catch {
+            Write-Verbose "Azure CLI token acquisition failed: $($_.Exception.Message)"
+        }
+    }
+
+    # Option 4: Service principal client credentials
+    if ($ClientId -and $ClientSecret -and $TenantId) {
+        Write-Verbose "Trying service principal client credentials..."
+        $tokenUrl = "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/token"
+        $tokenBody = @{
+            grant_type    = "client_credentials"
+            client_id     = $ClientId
+            client_secret = $ClientSecret
+            scope         = "https://vault.azure.net/.default"
+        }
+        try {
+            $response = Invoke-RestMethod -Uri $tokenUrl -Method POST -Body $tokenBody -ContentType "application/x-www-form-urlencoded"
+            Write-Host "    ✓ Acquired Key Vault token via service principal" -ForegroundColor Green
+            return $response.access_token
+        } catch {
+            $statusCode = $_.Exception.Response.StatusCode.value__
+            $errorMessage = if ($_.ErrorDetails.Message) {
+                try { ($_.ErrorDetails.Message | ConvertFrom-Json).error_description } catch { $_.ErrorDetails.Message }
+            } else { $_.Exception.Message }
+            Write-Error "Failed to acquire Key Vault token via service principal (HTTP $statusCode): $errorMessage"
+            if ($statusCode -eq 401 -or $statusCode -eq 400) {
+                Write-Host "  → Check ClientId, ClientSecret, and TenantId are correct" -ForegroundColor Yellow
+            }
+            throw
+        }
+    }
+
+    # Nothing worked
+    throw @"
+Could not acquire an Azure Key Vault access token. Provide one of:
+  1. -KeyVaultAccessToken  (pre-obtained token for https://vault.azure.net)
+  2. Connect-AzAccount     (Az PowerShell module, then re-run)
+  3. az login              (Azure CLI, then re-run)
+  4. -KeyVaultClientId, -KeyVaultClientSecret, -KeyVaultTenantId  (service principal)
+"@
 }
 
 function ConvertTo-PEMPrivateKey {
@@ -644,17 +712,8 @@ if ($kvInfo) {
     $kvClientSecret = $KeyVaultClientSecret
     $kvTenantId = $KeyVaultTenantId
     
-    if (-not $kvClientId -or -not $kvClientSecret -or -not $kvTenantId) {
-        Write-Error "Key Vault passkey detected but authentication parameters not provided"
-        Write-Host "  Required parameters:" -ForegroundColor Yellow
-        Write-Host "    -KeyVaultClientId" -ForegroundColor Gray
-        Write-Host "    -KeyVaultClientSecret" -ForegroundColor Gray
-        Write-Host "    -KeyVaultTenantId" -ForegroundColor Gray
-        throw "Missing Key Vault authentication parameters"
-    }
-    
     Write-Host "`n  🔑 Authenticating to Key Vault..." -ForegroundColor Cyan
-    $kvToken = Get-KeyVaultToken -TenantId $kvTenantId -ClientId $kvClientId -ClientSecret $kvClientSecret
+    $kvToken = Get-KeyVaultToken -AccessToken $KeyVaultAccessToken -TenantId $kvTenantId -ClientId $kvClientId -ClientSecret $kvClientSecret
     Write-Host "  ✓ Key Vault authenticated successfully" -ForegroundColor Green
 } else {
     Write-Host "`n  🔑 Using local private key" -ForegroundColor Cyan
