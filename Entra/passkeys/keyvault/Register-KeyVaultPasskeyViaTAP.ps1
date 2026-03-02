@@ -1,4 +1,5 @@
 #Requires -Version 7.0
+
 <#
 .SYNOPSIS
     Registers a FIDO2 passkey using a Temporary Access Pass, with the credential

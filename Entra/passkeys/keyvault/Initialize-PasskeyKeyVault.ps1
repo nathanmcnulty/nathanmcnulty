@@ -1,5 +1,6 @@
 ﻿#Requires -Version 7.0
 #Requires -Modules Microsoft.Graph.Authentication, Az.Accounts
+
 <#
 .SYNOPSIS
     Sets up Azure resources and permissions for Key Vault-backed passkey registration.

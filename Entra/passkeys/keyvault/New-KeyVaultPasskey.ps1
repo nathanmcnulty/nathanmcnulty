@@ -1,4 +1,5 @@
 ﻿#Requires -Version 7.0
+
 <#
 .SYNOPSIS
     Generates a software-based passkey (FIDO2) and registers it in Entra ID.
