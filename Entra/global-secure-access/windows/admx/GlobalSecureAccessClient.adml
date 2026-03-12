@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitionResources xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                           xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions"
+                           revision="1.0" schemaVersion="1.0">
+
+  <displayName>Global Secure Access Client Settings</displayName>
+  <description>ADMX policy definitions for the Microsoft Global Secure Access Windows client. Covers client access controls, system tray UI controls, B2B external user access, and network settings recommended for Global Secure Access deployments.</description>
+
+  <resources>
+    <stringTable>
+
+      <!-- Supported On -->
+      <string id="SUPPORTED_Windows10_1903">Windows 10 version 1903 and later</string>
+
+      <!-- Categories -->
+      <string id="GlobalSecureAccess">Global Secure Access</string>
+      <string id="GSAClientSettings">Client Settings</string>
+      <string id="GSAAccessControls">Access Controls</string>
+      <string id="GSAUIControls">System Tray UI Controls</string>
+      <string id="GSANetworkSettings">Network Settings</string>
+
+      <!-- ============================================================ -->
+      <!-- RestrictNonPrivilegedUsers                                    -->
+      <!-- ============================================================ -->
+      <string id="RestrictNonPrivilegedUsers">Restrict Non-Privileged Users from Disabling or Enabling the Client</string>
+      <string id="RestrictNonPrivilegedUsers_Help">Prevents non-privileged users on the Windows device from disabling or enabling the Global Secure Access client.
+
+When this policy is Enabled:
+- Non-privileged users cannot disable or enable the client without local admin credentials
+- A UAC prompt requiring local administrator credentials is shown when attempting to disable or enable the client
+- Registry: HKLM\SOFTWARE\Microsoft\Global Secure Access Client\RestrictNonPrivilegedUsers = 1
+
+When this policy is Disabled:
+- Non-privileged users can freely disable and enable the client
+- Registry: HKLM\SOFTWARE\Microsoft\Global Secure Access Client\RestrictNonPrivilegedUsers = 0
+
+Recommendation: Before enabling this restriction, verify that users do not need to disable the client for specific scenarios (such as accessing resources that conflict with traffic forwarding rules or using a non-Microsoft VPN). Establish a process to use local administrator credentials when the client must be temporarily disabled.
+
+This setting is often combined with "Hide Disable Button" for maximum client tamper protection.</string>
+
+      <!-- ============================================================ -->
+      <!-- GuestAccessEnabled (B2B External User Access)                -->
+      <!-- ============================================================ -->
+      <string id="GuestAccessEnabled">Enable External User (B2B Guest) Access (Preview)</string>
+      <string id="GuestAccessEnabled_Help">Enables the external user access (B2B guest) feature on this device. When enabled, users who are guests or members in a partner or resource tenant can switch the Global Secure Access client to the resource tenant context and access assigned private applications through that tenant's Private Access configuration.
+
+This is a preview feature.
+
+When this policy is Enabled:
+- External user (B2B guest) access is enabled on this device
+- The client discovers tenants where the signed-in user is an external user (guest or member) and offers tenant switching from the system tray user menu
+- Only Private Access traffic for the resource tenant is tunneled; Internet Access and Microsoft 365 tunnels to the home tenant disconnect during the switch
+- Registry: HKLM\SOFTWARE\Microsoft\Global Secure Access Client\GuestAccessEnabled = 1
+
+When this policy is Disabled:
+- External user access is not available on this device
+- Registry: HKLM\SOFTWARE\Microsoft\Global Secure Access Client\GuestAccessEnabled = 0
+
+Prerequisites for external user access to work:
+- The Global Secure Access client installed and connected to the user's home tenant
+- The home tenant requires at least a Microsoft Entra free subscription (no Global Secure Access license needed for the home tenant)
+- The resource tenant must have Global Secure Access Private Access enabled
+- The external user account must be assigned to the Private Access traffic forwarding profile in the resource tenant
+- At least one private application must be configured and assigned to the external user in the resource tenant
+
+Known limitations:
+- Internet Access, Microsoft 365, and Microsoft Entra tunnels to the home tenant are not maintained during the resource tenant session
+- Compliant network policies on the resource tenant will block access for external users (exclude external users from those policies)
+- If the user is added to a new external tenant while the client is connected, the client must be disabled and re-enabled for the new tenant to appear</string>
+
+      <!-- ============================================================ -->
+      <!-- DisablePrivateAccess (User-scoped)                           -->
+      <!-- ============================================================ -->
+      <string id="DisablePrivateAccess">Disable Private Access</string>
+      <string id="DisablePrivateAccess_Help">Controls whether Private Access is disabled for the current user. This is a user-scoped policy that writes to HKCU.
+
+When Private Access is disabled, network traffic to private applications goes directly to the network instead of through the Global Secure Access cloud service. This is useful for scenarios where the device is directly connected to the corporate network and the user prefers to access private applications without tunneling through Global Secure Access.
+
+When this policy is Enabled:
+- Private Access is disabled for this user on this device
+- Traffic to private applications is sent directly to the network (not tunneled through Global Secure Access)
+- The client status indicator shows "Global Secure Access - Private Access is disabled"
+- Registry: HKCU\SOFTWARE\Microsoft\Global Secure Access Client\IsPrivateAccessDisabledByUser = 1
+
+When this policy is Disabled:
+- Private Access is enabled for this user (default behavior)
+- Traffic to private applications is tunneled through Global Secure Access
+- Registry: HKCU\SOFTWARE\Microsoft\Global Secure Access Client\IsPrivateAccessDisabledByUser = 0
+
+Note: The "Disable Private Access" option is only available in the system tray menu if it is not hidden (see "Hide Disable Private Access Button" policy) and Private Access is enabled for the tenant. This policy overrides whatever the user has manually set in the client UI.</string>
+
+      <!-- ============================================================ -->
+      <!-- HideSignOutButton                                             -->
+      <!-- ============================================================ -->
+      <string id="HideSignOutButton">Hide Sign Out Button</string>
+      <string id="HideSignOutButton_Help">Controls the visibility of the "Sign out" action in the Global Secure Access client system tray icon menu.
+
+The Sign Out button allows users to sign in to the Global Secure Access client with a Microsoft Entra account that is different from the one used to sign in to Windows. It can also be used to force reauthentication of the current user. The signed-in user must belong to the same Microsoft Entra tenant that the device is joined to.
+
+Default behavior: The Sign Out button is hidden (value = 1).
+
+When this policy is Enabled:
+- The Sign Out button is hidden in the system tray menu
+- Registry: HKLM\SOFTWARE\Microsoft\Global Secure Access Client\HideSignOutButton = 1
+
+When this policy is Disabled:
+- The Sign Out button is visible in the system tray menu
+- Registry: HKLM\SOFTWARE\Microsoft\Global Secure Access Client\HideSignOutButton = 0
+
+This button is typically only needed in shared device scenarios or when troubleshooting authentication issues.</string>
+
+      <!-- ============================================================ -->
+      <!-- HideDisablePrivateAccessButton                               -->
+      <!-- ============================================================ -->
+      <string id="HideDisablePrivateAccessButton">Hide Disable Private Access Button</string>
+      <string id="HideDisablePrivateAccessButton_Help">Controls the visibility of the "Disable Private Access" action in the Global Secure Access client system tray icon menu.
+
+The Disable Private Access option lets users bypass Global Secure Access tunneling for private application traffic when they are directly connected to the corporate network. When Private Access is disabled, network traffic to private applications goes directly to the network rather than through the Global Secure Access cloud service.
+
+Default behavior: The Disable Private Access button is hidden (value = 1).
+
+When this policy is Enabled:
+- The Disable Private Access button is hidden in the system tray menu
+- Users cannot toggle Private Access from the client UI
+- Registry: HKLM\SOFTWARE\Microsoft\Global Secure Access Client\HideDisablePrivateAccessButton = 1
+
+When this policy is Disabled:
+- The Disable Private Access button is visible in the system tray menu
+- Registry: HKLM\SOFTWARE\Microsoft\Global Secure Access Client\HideDisablePrivateAccessButton = 0
+
+Note: This button is only shown when Private Access is enabled for the tenant. To control whether Private Access is actually disabled, use the user-scoped "Disable Private Access" policy.</string>
+
+      <!-- ============================================================ -->
+      <!-- HideDisableButton                                             -->
+      <!-- ============================================================ -->
+      <string id="HideDisableButton">Hide Disable Button</string>
+      <string id="HideDisableButton_Help">Controls the visibility of the "Disable" action in the Global Secure Access client system tray icon menu.
+
+The Disable button allows users to disable the entire Global Secure Access client. The client remains disabled until the user re-enables it from the system tray or until the device is restarted.
+
+Default behavior: The Disable button is visible (value = 0).
+
+When this policy is Enabled:
+- The Disable button is hidden in the system tray menu
+- Non-privileged users cannot disable the client from the UI (regardless of the RestrictNonPrivilegedUsers setting)
+- Registry: HKLM\SOFTWARE\Microsoft\Global Secure Access Client\HideDisableButton = 1
+
+When this policy is Disabled:
+- The Disable button is visible in the system tray menu
+- Registry: HKLM\SOFTWARE\Microsoft\Global Secure Access Client\HideDisableButton = 0
+
+Recommendation: Hide the Disable button in production deployments to prevent accidental or unauthorized disabling of the client. Combine with "Restrict Non-Privileged Users" for comprehensive client tamper protection.</string>
+
+      <!-- ============================================================ -->
+      <!-- PreferIPv4OverIPv6                                           -->
+      <!-- ============================================================ -->
+      <string id="PreferIPv4OverIPv6">Prefer IPv4 over IPv6 (Recommended for Global Secure Access)</string>
+      <string id="PreferIPv4OverIPv6_Help">Configures the device to prefer IPv4 over IPv6 for outbound network connections. This is strongly recommended for Global Secure Access deployments because the client does not currently support traffic acquisition for IPv6 destinations. Without this setting, traffic to dual-stack hosts (those that resolve to both IPv4 and IPv6 addresses) may bypass Global Secure Access tunneling.
+
+This setting modifies the DisabledComponents REG_DWORD value under HKLM\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters.
+
+IMPORTANT: A device restart is required for this setting to take effect.
+
+When this policy is Enabled:
+- The device prefers IPv4 over IPv6 (DisabledComponents = 32 / 0x20)
+- IPv6 remains functional but IPv4 addresses are preferred when both are available
+- Ensures traffic to dual-stack FQDNs in forwarding profile rules is acquired and tunneled correctly
+- Registry: HKLM\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\DisabledComponents = 32
+
+When this policy is Disabled:
+- No change to IPv4/IPv6 preference (DisabledComponents = 0)
+- Default Windows dual-stack behavior is restored
+- Registry: HKLM\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\DisabledComponents = 0
+
+Note: A value of 32 (0x20) only sets the preference order; IPv6 remains enabled and functional. This is distinct from disabling IPv6 entirely (value = 255), which is not recommended. For more information on IPv6 configuration, see: https://learn.microsoft.com/troubleshoot/windows-server/networking/configure-ipv6-in-windows</string>
+
+    </stringTable>
+  </resources>
+
+</policyDefinitionResources>

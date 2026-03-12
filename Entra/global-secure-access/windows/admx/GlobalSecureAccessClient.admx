@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitions xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions"
+                   revision="1.0" schemaVersion="1.0">
+
+  <policyNamespaces>
+    <target prefix="gsaclient" namespace="Microsoft.Policies.GlobalSecureAccessClient" />
+  </policyNamespaces>
+
+  <resources minRequiredRevision="1.0" />
+
+  <supportedOn>
+    <definitions>
+      <definition name="SUPPORTED_Windows10_1903" displayName="$(string.SUPPORTED_Windows10_1903)" />
+    </definitions>
+  </supportedOn>
+
+  <categories>
+    <category name="GlobalSecureAccess" displayName="$(string.GlobalSecureAccess)" />
+    <category name="GSAClientSettings" displayName="$(string.GSAClientSettings)">
+      <parentCategory ref="GlobalSecureAccess" />
+    </category>
+    <category name="GSAAccessControls" displayName="$(string.GSAAccessControls)">
+      <parentCategory ref="GSAClientSettings" />
+    </category>
+    <category name="GSAUIControls" displayName="$(string.GSAUIControls)">
+      <parentCategory ref="GSAClientSettings" />
+    </category>
+    <category name="GSANetworkSettings" displayName="$(string.GSANetworkSettings)">
+      <parentCategory ref="GSAClientSettings" />
+    </category>
+  </categories>
+
+  <policies>
+
+    <!-- ================================================================ -->
+    <!-- ACCESS CONTROLS                                                    -->
+    <!-- ================================================================ -->
+
+    <!--
+      RestrictNonPrivilegedUsers
+      HKLM\SOFTWARE\Microsoft\Global Secure Access Client
+      REG_DWORD: 0 = non-privileged users can disable/enable | 1 = restricted (UAC prompt required)
+    -->
+    <policy name="RestrictNonPrivilegedUsers"
+            class="Machine"
+            displayName="$(string.RestrictNonPrivilegedUsers)"
+            explainText="$(string.RestrictNonPrivilegedUsers_Help)"
+            key="SOFTWARE\Microsoft\Global Secure Access Client"
+            valueName="RestrictNonPrivilegedUsers">
+      <parentCategory ref="GSAAccessControls" />
+      <supportedOn ref="SUPPORTED_Windows10_1903" />
+      <enabledValue>
+        <decimal value="1" />
+      </enabledValue>
+      <disabledValue>
+        <decimal value="0" />
+      </disabledValue>
+    </policy>
+
+    <!--
+      GuestAccessEnabled (B2B External User Access - Preview)
+      HKLM\SOFTWARE\Microsoft\Global Secure Access Client
+      REG_DWORD: 0 = disabled | 1 = enabled
+    -->
+    <policy name="GuestAccessEnabled"
+            class="Machine"
+            displayName="$(string.GuestAccessEnabled)"
+            explainText="$(string.GuestAccessEnabled_Help)"
+            key="SOFTWARE\Microsoft\Global Secure Access Client"
+            valueName="GuestAccessEnabled">
+      <parentCategory ref="GSAAccessControls" />
+      <supportedOn ref="SUPPORTED_Windows10_1903" />
+      <enabledValue>
+        <decimal value="1" />
+      </enabledValue>
+      <disabledValue>
+        <decimal value="0" />
+      </disabledValue>
+    </policy>
+
+    <!--
+      IsPrivateAccessDisabledByUser (User-scoped)
+      HKCU\SOFTWARE\Microsoft\Global Secure Access Client
+      REG_DWORD: 0 = Private Access enabled | 1 = Private Access disabled by user
+    -->
+    <policy name="DisablePrivateAccess"
+            class="User"
+            displayName="$(string.DisablePrivateAccess)"
+            explainText="$(string.DisablePrivateAccess_Help)"
+            key="SOFTWARE\Microsoft\Global Secure Access Client"
+            valueName="IsPrivateAccessDisabledByUser">
+      <parentCategory ref="GSAAccessControls" />
+      <supportedOn ref="SUPPORTED_Windows10_1903" />
+      <enabledValue>
+        <decimal value="1" />
+      </enabledValue>
+      <disabledValue>
+        <decimal value="0" />
+      </disabledValue>
+    </policy>
+
+    <!-- ================================================================ -->
+    <!-- SYSTEM TRAY UI CONTROLS                                           -->
+    <!-- ================================================================ -->
+
+    <!--
+      HideSignOutButton
+      HKLM\SOFTWARE\Microsoft\Global Secure Access Client
+      REG_DWORD: 0 = shown | 1 = hidden (default: hidden)
+    -->
+    <policy name="HideSignOutButton"
+            class="Machine"
+            displayName="$(string.HideSignOutButton)"
+            explainText="$(string.HideSignOutButton_Help)"
+            key="SOFTWARE\Microsoft\Global Secure Access Client"
+            valueName="HideSignOutButton">
+      <parentCategory ref="GSAUIControls" />
+      <supportedOn ref="SUPPORTED_Windows10_1903" />
+      <enabledValue>
+        <decimal value="1" />
+      </enabledValue>
+      <disabledValue>
+        <decimal value="0" />
+      </disabledValue>
+    </policy>
+
+    <!--
+      HideDisablePrivateAccessButton
+      HKLM\SOFTWARE\Microsoft\Global Secure Access Client
+      REG_DWORD: 0 = shown | 1 = hidden (default: hidden)
+    -->
+    <policy name="HideDisablePrivateAccessButton"
+            class="Machine"
+            displayName="$(string.HideDisablePrivateAccessButton)"
+            explainText="$(string.HideDisablePrivateAccessButton_Help)"
+            key="SOFTWARE\Microsoft\Global Secure Access Client"
+            valueName="HideDisablePrivateAccessButton">
+      <parentCategory ref="GSAUIControls" />
+      <supportedOn ref="SUPPORTED_Windows10_1903" />
+      <enabledValue>
+        <decimal value="1" />
+      </enabledValue>
+      <disabledValue>
+        <decimal value="0" />
+      </disabledValue>
+    </policy>
+
+    <!--
+      HideDisableButton
+      HKLM\SOFTWARE\Microsoft\Global Secure Access Client
+      REG_DWORD: 0 = shown (default) | 1 = hidden
+    -->
+    <policy name="HideDisableButton"
+            class="Machine"
+            displayName="$(string.HideDisableButton)"
+            explainText="$(string.HideDisableButton_Help)"
+            key="SOFTWARE\Microsoft\Global Secure Access Client"
+            valueName="HideDisableButton">
+      <parentCategory ref="GSAUIControls" />
+      <supportedOn ref="SUPPORTED_Windows10_1903" />
+      <enabledValue>
+        <decimal value="1" />
+      </enabledValue>
+      <disabledValue>
+        <decimal value="0" />
+      </disabledValue>
+    </policy>
+
+    <!-- ================================================================ -->
+    <!-- NETWORK SETTINGS                                                   -->
+    <!-- ================================================================ -->
+
+    <!--
+      Prefer IPv4 over IPv6 (DisabledComponents)
+      HKLM\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters
+      REG_DWORD: 0 = no preference (default) | 32 (0x20) = prefer IPv4
+      NOTE: Requires device restart to take effect.
+    -->
+    <policy name="PreferIPv4OverIPv6"
+            class="Machine"
+            displayName="$(string.PreferIPv4OverIPv6)"
+            explainText="$(string.PreferIPv4OverIPv6_Help)"
+            key="SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters"
+            valueName="DisabledComponents">
+      <parentCategory ref="GSANetworkSettings" />
+      <supportedOn ref="SUPPORTED_Windows10_1903" />
+      <enabledValue>
+        <decimal value="32" />
+      </enabledValue>
+      <disabledValue>
+        <decimal value="0" />
+      </disabledValue>
+    </policy>
+
+  </policies>
+
+</policyDefinitions>
