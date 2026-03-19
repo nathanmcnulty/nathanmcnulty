@@ -1,0 +1,8 @@
+# One app per line.
+# Formats:
+#   <guid>
+#   Display Name
+#   <guid>|Display Name
+
+a926d272-e04d-45b9-af37-78b9482ce23f|Global Secure Access
+b37ce405-53a7-430b-84ee-d8c4b7f87fca|Escrow Buddy
