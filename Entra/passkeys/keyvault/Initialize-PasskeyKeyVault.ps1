@@ -160,6 +160,82 @@ function Write-Info {
     Write-Host "  $Message" -ForegroundColor Gray
 }
 
+function Test-HttpNotFound {
+    param([System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    $errorMessage = @(
+        $ErrorRecord.Exception.Message
+        $ErrorRecord.ErrorDetails.Message
+        $ErrorRecord.ToString()
+    ) -join "`n"
+
+    return $errorMessage -match '(^|\D)404(\D|$)|NotFound|ResourceNotFound|was not found'
+}
+
+function Format-DisplayValue {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $null
+    }
+
+    return $Value.Substring(0, 1).ToUpper() + $Value.Substring(1)
+}
+
+function Get-AzRestErrorMessage {
+    param($Content)
+
+    if ($null -eq $Content -or [string]::IsNullOrWhiteSpace([string]$Content)) {
+        return "Unknown error"
+    }
+
+    $parsedContent = $Content
+    if ($Content -is [string]) {
+        try {
+            $parsedContent = $Content | ConvertFrom-Json -Depth 20
+        } catch {
+            return $Content
+        }
+    }
+
+    $errorBody = if ($parsedContent.error) { $parsedContent.error } else { $parsedContent }
+    $code = $errorBody.code
+    $message = $errorBody.message
+
+    if (-not [string]::IsNullOrWhiteSpace($code) -and -not [string]::IsNullOrWhiteSpace($message)) {
+        return "${code}: $message"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($message)) {
+        return $message
+    }
+
+    if ($parsedContent.reason -or $parsedContent.message) {
+        $parts = @()
+        if ($parsedContent.reason) {
+            $parts += [string]$parsedContent.reason
+        }
+        if ($parsedContent.message) {
+            $parts += [string]$parsedContent.message
+        }
+        if ($parts.Count -gt 0) {
+            return ($parts -join ': ')
+        }
+    }
+
+    try {
+        return ($parsedContent | ConvertTo-Json -Depth 20 -Compress)
+    } catch {
+        return [string]$Content
+    }
+}
+
+function Test-TransientAzRestFailure {
+    param([string]$Message)
+
+    return $Message -match '^HTTP (429|500|502|503|504):' -or
+        $Message -match 'temporarily unavailable|timed out|timeout|connection.*closed|transport connection'
+}
+
 function Invoke-AzRestMethodWithRetry {
     param(
         [string]$Method,
@@ -192,7 +268,7 @@ function Invoke-AzRestMethodWithRetry {
             
             # Handle specific error codes
             $errorContent = if ($result.Content) { 
-                try { $result.Content | ConvertFrom-Json } catch { $result.Content }
+                Get-AzRestErrorMessage -Content $result.Content
             } else { 
                 "Unknown error" 
             }
@@ -210,11 +286,14 @@ function Invoke-AzRestMethodWithRetry {
             throw "HTTP $($result.StatusCode): $errorContent"
         } catch {
             $lastError = $_.Exception.Message
-            if ($attempt -lt $MaxRetries) {
+            if ($attempt -lt $MaxRetries -and (Test-TransientAzRestFailure -Message $lastError)) {
                 Write-Warning "Request failed (attempt $attempt/$MaxRetries), retrying in $RetryDelaySeconds seconds..."
                 Start-Sleep -Seconds $RetryDelaySeconds
             } else {
-                throw "Failed after $MaxRetries attempts: $lastError"
+                if ($attempt -gt 1 -and (Test-TransientAzRestFailure -Message $lastError)) {
+                    throw "Failed after $attempt attempts: $lastError"
+                }
+                throw $lastError
             }
         }
     }
@@ -525,9 +604,19 @@ try {
     if ($existingKV.StatusCode -eq 200) {
         Write-Success "Key Vault already exists"
         $kvData = $existingKV.Content | ConvertFrom-Json
-        $existingSku = $kvData.properties.sku.name
+        $existingSku = if ($kvData.properties.sku.name) {
+            $kvData.properties.sku.name
+        } elseif ($kvData.sku.name) {
+            $kvData.sku.name
+        } else {
+            $null
+        }
         Write-Info "Location: $($kvData.location)"
-        Write-Info "SKU: $($existingSku.Substring(0,1).ToUpper() + $existingSku.Substring(1))"
+        if ($existingSku) {
+            Write-Info "SKU: $(Format-DisplayValue -Value $existingSku)"
+        } else {
+            Write-Warning "Could not determine Key Vault SKU from Azure response"
+        }
         
         if ($kvData.properties.enableRbacAuthorization) {
             Write-Success "RBAC authorization is enabled"
@@ -540,10 +629,42 @@ try {
         } else {
             Write-Warning "Purge protection is NOT enabled - permanent deletion is possible during soft-delete retention period"
         }
+    } elseif ($existingKV.StatusCode -eq 404) {
+        throw [System.Management.Automation.ItemNotFoundException]::new("Key Vault '$KeyVaultName' was not found")
     } else {
-        throw "Key Vault does not exist"
+        throw "Unexpected status code checking Key Vault '$KeyVaultName': $($existingKV.StatusCode)"
     }
 } catch {
+    if (-not (Test-HttpNotFound -ErrorRecord $_)) {
+        throw
+    }
+
+    Write-Host "  Validating Key Vault name availability..." -ForegroundColor Gray
+    $nameCheckUri = "https://management.azure.com/subscriptions/$SubscriptionId/providers/Microsoft.KeyVault/checkNameAvailability`?api-version=2024-11-01"
+    $nameCheckBody = @{
+        name = $KeyVaultName
+        type = "Microsoft.KeyVault/vaults"
+    } | ConvertTo-Json
+
+    try {
+        $nameCheck = Invoke-AzRestMethodWithRetry -Method POST -Uri $nameCheckUri -Payload $nameCheckBody
+        $nameCheckData = $nameCheck.Content | ConvertFrom-Json
+        if (-not $nameCheckData.nameAvailable) {
+            $availabilityMessage = if ($nameCheckData.message) {
+                $nameCheckData.message
+            } else {
+                "Reason: $($nameCheckData.reason)"
+            }
+            throw "Key Vault name '$KeyVaultName' is not available. $availabilityMessage"
+        }
+    } catch {
+        if ($_.Exception.Message -like "Key Vault name '$KeyVaultName' is not available.*") {
+            throw
+        }
+
+        Write-Warning "Unable to validate Key Vault name availability before creation: $($_.Exception.Message)"
+    }
+
     Write-Host "  Creating Key Vault..." -ForegroundColor Yellow
     
     if ($EnablePurgeProtection) {
@@ -559,7 +680,6 @@ try {
             }
             tenantId = $tenantId
             enableRbacAuthorization = $true
-            enableSoftDelete = $true
             softDeleteRetentionInDays = 90
             enablePurgeProtection = $EnablePurgeProtection
         }
@@ -587,7 +707,7 @@ try {
             
             try {
                 # Try to get Key Vault properties to verify it's accessible
-                $kvCheck = Invoke-AzRestMethod -Method GET -Path "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.KeyVault/vaults/$($KeyVaultName)?api-version=2023-02-01"
+                $kvCheck = Invoke-AzRestMethod -Method GET -Uri $kvUri
                 if ($kvCheck.StatusCode -eq 200) {
                     $kvReady = $true
                     Write-Host " ✓" -ForegroundColor Green
