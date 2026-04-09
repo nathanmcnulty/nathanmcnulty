@@ -17,6 +17,38 @@ Below are the discovery and remediation scripts:
 [Discovery script](./windows/gsa-settings-discovery.ps1)  
 [Detection script](./windows/gsa-settings-detection.ps1)
 
+## Private Access Enterprise Apps
+
+The [New-EntraPrivateAccessEnterpriseApps.ps1](./New-EntraPrivateAccessEnterpriseApps.ps1) script creates Microsoft Entra Private Access enterprise apps from either a CSV containing `userPrincipalName`, `IP`, and `FQDN` columns or direct parameters.
+
+It uses only the `Microsoft.Graph.Authentication` module and the `Invoke-MgGraphRequest` cmdlet for Graph operations.
+
+Single IP addresses from the CSV are normalized to `/32` CIDR segments when sent to Graph because that path validated successfully against the live Private Access API.
+
+```powershell
+Connect-MgGraph -Scopes "Directory.ReadWrite.All","NetworkAccess.ReadWrite.All","AppRoleAssignment.ReadWrite.All" -NoWelcome
+
+.\New-EntraPrivateAccessEnterpriseApps.ps1 `
+   -CsvPath .\private-access.csv `
+   -Ports "3389-3389","445-445"
+```
+
+```powershell
+.\New-EntraPrivateAccessEnterpriseApps.ps1 `
+   -UserPrincipalName "user1@contoso.com","user2@contoso.com" `
+   -FQDN "app.contoso.internal" `
+   -IP "10.0.0.10" `
+   -Ports "443-443"
+```
+
+Rows are grouped by destination so rerunning the script reuses the same app name, skips existing segments, and adds only missing user assignments.
+
+The script assumes the connector group already exists. It does not create connectors or connector groups. If `-ConnectorGroupId` is omitted, the script queries existing connector groups and opens `Out-GridView` when more than one group exists so you can choose interactively. For unattended automation, pass `-ConnectorGroupId` explicitly.
+
+Direct-parameter mode provisions one destination per invocation and is useful when you do not want to stage a CSV first.
+
+Microsoft Entra Private Access also enforces overlapping IP segment checks across apps, so avoid assigning the same IP or CIDR range to multiple enterprise apps unless that overlap is intentional and supported.
+
 ## macOS
 
 Global Secure Access for macOS requires macOS 13.0 or higher, the device must be registered to Entra with the Company Portal, and the Enterprise SSO plug-in must be deployed.
