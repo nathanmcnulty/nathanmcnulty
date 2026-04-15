@@ -109,6 +109,10 @@ $script:RequiredScopes = @(
     'AppRoleAssignment.ReadWrite.All'
 )
 $script:UserCache = @{}
+$script:ApplicationsById = @{}
+$script:ExistingSegmentIndex = @{}
+$script:ReadinessRetryCount = 15
+$script:ReadinessRetryDelaySeconds = 2
 
 function Write-Info {
     param([string]$Message)
@@ -118,6 +122,11 @@ function Write-Info {
 function Write-Success {
     param([string]$Message)
     Write-Host "[OK]   $Message" -ForegroundColor Green
+}
+
+function Write-Step {
+    param([string]$Message)
+    Write-Host "[WAIT] $Message" -ForegroundColor DarkYellow
 }
 
 function Connect-GraphSession {
@@ -169,6 +178,84 @@ function Get-GraphCollection {
     return @($items)
 }
 
+function Invoke-WithRetry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$ScriptBlock,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Action,
+
+        [Parameter(Mandatory = $false)]
+        [int]$MaxAttempts = $script:ReadinessRetryCount,
+
+        [Parameter(Mandatory = $false)]
+        [int]$DelaySeconds = $script:ReadinessRetryDelaySeconds,
+
+        [Parameter(Mandatory = $false)]
+        [scriptblock]$SuccessCondition
+    )
+
+    $lastError = $null
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            $result = & $ScriptBlock
+
+            if (-not $SuccessCondition -or (& $SuccessCondition $result)) {
+                return $result
+            }
+
+            $lastError = "Verification for '$Action' did not succeed yet."
+        } catch {
+            $lastError = $_.Exception.Message
+        }
+
+        if ($attempt -lt $MaxAttempts) {
+            Write-Step "$Action not ready yet (attempt $attempt/$MaxAttempts): $lastError"
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+
+    throw "$Action failed after $MaxAttempts attempt(s). Last error: $lastError"
+}
+
+function Invoke-VerifiedAction {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Action,
+
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$GetState,
+
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$IsVerified,
+
+        [Parameter(Mandatory = $false)]
+        [scriptblock]$SetState,
+
+        [Parameter(Mandatory = $false)]
+        [int]$MaxAttempts = $script:ReadinessRetryCount,
+
+        [Parameter(Mandatory = $false)]
+        [int]$DelaySeconds = $script:ReadinessRetryDelaySeconds
+    )
+
+    return Invoke-WithRetry -Action $Action -MaxAttempts $MaxAttempts -DelaySeconds $DelaySeconds -ScriptBlock {
+        $currentState = & $GetState
+
+        if (-not (& $IsVerified $currentState)) {
+            if ($SetState) {
+                & $SetState $currentState
+            }
+
+            $currentState = & $GetState
+        }
+
+        return $currentState
+    } -SuccessCondition $IsVerified
+}
+
 function ConvertTo-NormalizedText {
     param($Value)
 
@@ -182,6 +269,20 @@ function ConvertTo-NormalizedText {
     }
 
     return $text.Trim()
+}
+
+function Test-BooleanTrue {
+    param($Value)
+
+    if ($Value -is [bool]) {
+        return $Value
+    }
+
+    if ($Value -is [string]) {
+        return $Value.Trim().ToLowerInvariant() -eq 'true'
+    }
+
+    return $false
 }
 
 function Convert-IpSegment {
@@ -387,7 +488,7 @@ function Get-ServicePrincipalByAppId {
         [string]$AppId
     )
 
-    $servicePrincipals = Get-GraphCollection -Uri "/beta/servicePrincipals?`$filter=appId eq '$AppId'&`$select=id,appId,displayName,appRoles"
+    $servicePrincipals = Get-GraphCollection -Uri "/v1.0/servicePrincipals?`$filter=appId eq '$AppId'&`$select=id,appId,displayName,appRoles"
 
     if ($servicePrincipals.Count -eq 0) {
         throw "Service principal for appId '$AppId' was not found."
@@ -400,14 +501,291 @@ function Get-ServicePrincipalByAppId {
     return $servicePrincipals[0]
 }
 
-function Get-OrCreatePrivateAccessApplication {
+function Get-ApplicationById {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ApplicationId
+    )
+
+    return Invoke-MgGraphRequest -Method GET -Uri "/v1.0/applications/${ApplicationId}?`$select=id,appId,displayName,tags" -OutputType PSObject
+}
+
+function Get-PrivateAccessApplicationState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ApplicationId
+    )
+
+    return Invoke-MgGraphRequest -Method GET -Uri "/beta/applications/${ApplicationId}?`$select=id,appId,displayName,onPremisesPublishing,tags" -OutputType PSObject
+}
+
+function Get-ApplicationsByDisplayName {
     param(
         [Parameter(Mandatory = $true)]
         [string]$DisplayName
     )
 
     $escapedDisplayName = $DisplayName -replace "'", "''"
-    $applications = Get-GraphCollection -Uri "/beta/applications?`$filter=displayName eq '$escapedDisplayName'&`$select=id,appId,displayName"
+    return Get-GraphCollection -Uri "/v1.0/applications?`$filter=displayName eq '$escapedDisplayName'&`$select=id,appId,displayName"
+}
+
+function Wait-ForApplicationReady {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ApplicationId
+    )
+
+    return Invoke-VerifiedAction -Action "Application '$ApplicationId' readiness" -GetState {
+        Get-ApplicationById -ApplicationId $ApplicationId
+    } -IsVerified {
+        param($application)
+        $null -ne $application -and -not [string]::IsNullOrWhiteSpace([string]$application.id)
+    }
+}
+
+function Wait-ForServicePrincipalReady {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AppId
+    )
+
+    return Invoke-VerifiedAction -Action "Service principal for appId '$AppId' readiness" -GetState {
+        Get-ServicePrincipalByAppId -AppId $AppId
+    } -IsVerified {
+        param($servicePrincipal)
+        $null -ne $servicePrincipal -and -not [string]::IsNullOrWhiteSpace([string]$servicePrincipal.id)
+    }
+}
+
+function Wait-ForUserAppRole {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AppId,
+
+        [Parameter(Mandatory = $false)]
+        [string]$DisplayName
+    )
+
+    return Invoke-VerifiedAction -Action "User app role for '$DisplayName'" -GetState {
+        $servicePrincipal = Wait-ForServicePrincipalReady -AppId $AppId
+        [pscustomobject]@{
+            ServicePrincipal = $servicePrincipal
+            UserRole = @($servicePrincipal.appRoles) |
+                Where-Object {
+                    $_.displayName -eq 'User' -and
+                    $_.isEnabled -eq $true -and
+                    'User' -in $_.allowedMemberTypes
+                } |
+                Select-Object -First 1
+        }
+    } -IsVerified {
+        param($result)
+        $null -ne $result.ServicePrincipal -and $null -ne $result.UserRole
+    }
+}
+
+function Enable-PrivateAccessApplication {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ApplicationId,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DisplayName
+    )
+
+    $publishBody = @{
+        onPremisesPublishing = @{
+            applicationType = 'nonwebapp'
+            isAccessibleViaZTNAClient = $true
+        }
+    } | ConvertTo-Json -Depth 10
+
+    Invoke-VerifiedAction -Action "Enable Private Access on '$DisplayName'" -GetState {
+        try {
+            Get-PrivateAccessApplicationState -ApplicationId $ApplicationId
+        } catch {
+            $null
+        }
+    } -IsVerified {
+        param($application)
+        if ($null -eq $application) {
+            return $false
+        }
+
+        $publishing = $application.onPremisesPublishing
+        $null -ne $publishing -and
+        [string]$publishing.applicationType -eq 'nonwebapp' -and
+        (Test-BooleanTrue -Value $publishing.isAccessibleViaZTNAClient)
+    } -SetState {
+        param($application)
+        Invoke-MgGraphRequest -Method PATCH -Uri "/beta/applications/$ApplicationId" -Body $publishBody -ContentType 'application/json' -OutputType PSObject | Out-Null
+    } | Out-Null
+
+    Write-Success "Verified Private Access enablement on '$DisplayName'"
+}
+
+function Get-ConnectorGroupReferenceState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ApplicationId
+    )
+
+    try {
+        return Invoke-MgGraphRequest -Method GET -Uri "/beta/applications/$ApplicationId/connectorGroup?`$select=id,name" -OutputType PSObject
+    } catch {
+        return $null
+    }
+}
+
+function Set-ApplicationConnectorGroup {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ApplicationId,
+
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$ConnectorGroup,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DisplayName
+    )
+
+    $connectorGroupBody = @{
+        '@odata.id' = "https://graph.microsoft.com/beta/onPremisesPublishingProfiles/applicationProxy/connectorGroups/$($ConnectorGroup.id)"
+    } | ConvertTo-Json
+
+    Invoke-VerifiedAction -Action "Assign connector group '$($ConnectorGroup.name)' to '$DisplayName'" -GetState {
+        Get-ConnectorGroupReferenceState -ApplicationId $ApplicationId
+    } -IsVerified {
+        param($currentConnectorGroup)
+        $null -ne $currentConnectorGroup -and [string]$currentConnectorGroup.id -eq [string]$ConnectorGroup.id
+    } -SetState {
+        param($currentConnectorGroup)
+        Invoke-MgGraphRequest -Method PUT -Uri "/beta/applications/$ApplicationId/connectorGroup/`$ref" -Body $connectorGroupBody -ContentType 'application/json' -OutputType PSObject | Out-Null
+    } | Out-Null
+
+    Write-Success "Verified connector group '$($ConnectorGroup.name)'"
+}
+
+function Get-ExistingPrivateAccessSegments {
+    $applications = Get-GraphCollection -Uri "/v1.0/applications?`$select=id,appId,displayName"
+    $index = @{}
+
+    foreach ($application in $applications) {
+        $script:ApplicationsById[$application.id] = $application
+
+        try {
+            $segments = Get-GraphCollection -Uri "/beta/applications/$($application.id)/onPremisesPublishing/segmentsConfiguration/microsoft.graph.ipSegmentConfiguration/applicationSegments"
+        } catch {
+            continue
+        }
+
+        foreach ($segment in $segments) {
+            $destinationType = ConvertTo-NormalizedText -Value $segment.destinationType
+            $destinationHost = ConvertTo-NormalizedText -Value $segment.destinationHost
+
+            if (-not $destinationType -or -not $destinationHost) {
+                continue
+            }
+
+            $segmentIndexKey = "$($destinationType.ToLowerInvariant()):$($destinationHost.ToLowerInvariant())"
+
+            if (-not $index.ContainsKey($segmentIndexKey)) {
+                $index[$segmentIndexKey] = @()
+            }
+
+            $index[$segmentIndexKey] += [pscustomobject]@{
+                ApplicationId = $application.id
+                AppId         = $application.appId
+                DisplayName   = $application.displayName
+                SegmentId     = $segment.id
+            }
+        }
+    }
+
+    return $index
+}
+
+function Assert-TargetDoesNotExistOnDifferentApplication {
+    param(
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$Target,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DisplayName,
+
+        [Parameter(Mandatory = $false)]
+        [string]$CurrentApplicationId
+    )
+
+    foreach ($segment in $Target.Segments.Values) {
+        $segmentIndexKey = "$($segment.DestinationType.ToLowerInvariant()):$($segment.DestinationHost.ToLowerInvariant())"
+
+        if (-not $script:ExistingSegmentIndex.ContainsKey($segmentIndexKey)) {
+            continue
+        }
+
+        $conflicts = @(
+            $script:ExistingSegmentIndex[$segmentIndexKey] |
+            Where-Object { -not $CurrentApplicationId -or $_.ApplicationId -ne $CurrentApplicationId }
+        )
+
+        if ($conflicts.Count -gt 0) {
+            $conflict = $conflicts[0]
+            throw "Cannot create or update '$DisplayName' because segment '$($segment.DestinationType):$($segment.DestinationHost)' already exists on application '$($conflict.DisplayName)' ($($conflict.ApplicationId))."
+        }
+    }
+}
+
+function Update-ExistingSegmentIndex {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ApplicationId,
+
+        [Parameter(Mandatory = $true)]
+        [string]$AppId,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DisplayName,
+
+        [Parameter(Mandatory = $false)]
+        [AllowEmptyCollection()]
+        [string[]]$AddedSegments
+    )
+
+    if ($null -eq $AddedSegments -or $AddedSegments.Count -eq 0) {
+        return
+    }
+
+    foreach ($addedSegment in $AddedSegments) {
+        $separatorIndex = $addedSegment.IndexOf(':')
+        if ($separatorIndex -lt 1) {
+            continue
+        }
+
+        $destinationType = $addedSegment.Substring(0, $separatorIndex)
+        $destinationHost = $addedSegment.Substring($separatorIndex + 1)
+        $segmentIndexKey = "$($destinationType.ToLowerInvariant()):$($destinationHost.ToLowerInvariant())"
+
+        if (-not $script:ExistingSegmentIndex.ContainsKey($segmentIndexKey)) {
+            $script:ExistingSegmentIndex[$segmentIndexKey] = @()
+        }
+
+        $script:ExistingSegmentIndex[$segmentIndexKey] += [pscustomobject]@{
+            ApplicationId = $ApplicationId
+            AppId         = $AppId
+            DisplayName   = $DisplayName
+            SegmentId     = $null
+        }
+    }
+}
+
+function Get-OrCreatePrivateAccessApplication {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DisplayName
+    )
+
+    $applications = Get-ApplicationsByDisplayName -DisplayName $DisplayName
 
     if ($applications.Count -gt 1) {
         throw "Multiple applications named '$DisplayName' were found. Use a different -AppNamePrefix."
@@ -419,41 +797,23 @@ function Get-OrCreatePrivateAccessApplication {
 
     if ($applications.Count -eq 1) {
         $application = $applications[0]
-        $servicePrincipal = Get-ServicePrincipalByAppId -AppId $application.appId
+        $script:ApplicationsById[$application.id] = $application
         Write-Info "Reusing existing application '$DisplayName'"
     } else {
         $body = @{ displayName = $DisplayName } | ConvertTo-Json
         $instantiateResult = Invoke-MgGraphRequest -Method POST -Uri "/v1.0/applicationTemplates/$($script:CustomApplicationTemplateId)/instantiate" -Body $body -ContentType 'application/json' -OutputType PSObject
         $application = $instantiateResult.application
-        $servicePrincipal = $instantiateResult.servicePrincipal
         $created = $true
+        $script:ApplicationsById[$application.id] = $application
         Write-Success "Created application '$DisplayName'"
     }
 
-    if (-not $servicePrincipal -or -not $servicePrincipal.appRoles) {
-        $servicePrincipal = Get-ServicePrincipalByAppId -AppId $application.appId
-    }
+    Wait-ForApplicationReady -ApplicationId $application.id | Out-Null
+    Enable-PrivateAccessApplication -ApplicationId $application.id -DisplayName $DisplayName
 
-    $publishBody = @{
-        onPremisesPublishing = @{
-            applicationType = 'nonwebapp'
-            isAccessibleViaZTNAClient = $true
-        }
-    } | ConvertTo-Json -Depth 10
-
-    Invoke-MgGraphRequest -Method PATCH -Uri "/beta/applications/$($application.id)" -Body $publishBody -ContentType 'application/json' -OutputType PSObject | Out-Null
-
-    $userRole = @($servicePrincipal.appRoles) |
-        Where-Object {
-            $_.displayName -eq 'User' -and
-            $_.isEnabled -eq $true -and
-            'User' -in $_.allowedMemberTypes
-        } |
-        Select-Object -First 1
-
-    if (-not $userRole) {
-        throw "Service principal '$($servicePrincipal.displayName)' does not contain an enabled User app role."
-    }
+    $roleResult = Wait-ForUserAppRole -AppId $application.appId -DisplayName $DisplayName
+    $servicePrincipal = $roleResult.ServicePrincipal
+    $userRole = $roleResult.UserRole
 
     return [pscustomobject]@{
         Application      = $application
@@ -461,6 +821,25 @@ function Get-OrCreatePrivateAccessApplication {
         UserAppRoleId    = $userRole.id
         Created          = $created
     }
+}
+
+function Get-ExistingApplicationByDisplayName {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DisplayName
+    )
+
+    $applications = Get-ApplicationsByDisplayName -DisplayName $DisplayName
+
+    if ($applications.Count -gt 1) {
+        throw "Multiple applications named '$DisplayName' were found. Use a different -AppNamePrefix."
+    }
+
+    if ($applications.Count -eq 1) {
+        return $applications[0]
+    }
+
+    return $null
 }
 
 function Get-SegmentKey {
@@ -497,28 +876,10 @@ function Add-ApplicationSegments {
         [string]$SegmentProtocol
     )
 
-    $existingSegments = Get-GraphCollection -Uri "/beta/applications/$ApplicationId/onPremisesPublishing/segmentsConfiguration/microsoft.graph.ipSegmentConfiguration/applicationSegments"
-    $existingKeys = @()
-
-    foreach ($existingSegment in $existingSegments) {
-        $destinationType = ConvertTo-NormalizedText -Value $existingSegment.destinationType
-        $destinationHost = ConvertTo-NormalizedText -Value $existingSegment.destinationHost
-        $protocol = ConvertTo-NormalizedText -Value $existingSegment.protocol
-
-        if ($destinationType -and $destinationHost -and $protocol) {
-            $existingKeys += Get-SegmentKey -DestinationType $destinationType -DestinationHost $destinationHost -SegmentPorts @($existingSegment.ports) -SegmentProtocol $protocol
-        }
-    }
-
     $addedSegments = @()
 
     foreach ($segment in @($Segments.Values | Sort-Object -Property DestinationType, DestinationHost)) {
         $segmentKey = Get-SegmentKey -DestinationType $segment.DestinationType -DestinationHost $segment.DestinationHost -SegmentPorts $SegmentPorts -SegmentProtocol $SegmentProtocol
-
-        if ($segmentKey -in $existingKeys) {
-            Write-Info "Segment already exists: $($segment.DestinationType) $($segment.DestinationHost)"
-            continue
-        }
 
         $body = @{
             destinationHost = $segment.DestinationHost
@@ -528,12 +889,44 @@ function Add-ApplicationSegments {
             protocol        = $SegmentProtocol
         } | ConvertTo-Json -Depth 10
 
-        Invoke-MgGraphRequest -Method POST -Uri "/beta/applications/$ApplicationId/onPremisesPublishing/segmentsConfiguration/microsoft.graph.ipSegmentConfiguration/applicationSegments" -Body $body -ContentType 'application/json' -OutputType PSObject | Out-Null
-        $addedSegments += "$($segment.DestinationType):$($segment.DestinationHost)"
-        Write-Success "Added segment $($segment.DestinationType):$($segment.DestinationHost)"
+        $segmentState = Invoke-VerifiedAction -Action "Ensure segment $($segment.DestinationType):$($segment.DestinationHost) on '$ApplicationId'" -GetState {
+            $existingSegments = Get-GraphCollection -Uri "/beta/applications/$ApplicationId/onPremisesPublishing/segmentsConfiguration/microsoft.graph.ipSegmentConfiguration/applicationSegments"
+            [pscustomobject]@{
+                ExistingSegments = @($existingSegments)
+                MatchingSegment = @(
+                    $existingSegments |
+                    Where-Object {
+                        $destinationType = ConvertTo-NormalizedText -Value $_.destinationType
+                        $destinationHost = ConvertTo-NormalizedText -Value $_.destinationHost
+                        $protocol = ConvertTo-NormalizedText -Value $_.protocol
+
+                        if (-not $destinationType -or -not $destinationHost -or -not $protocol) {
+                            return $false
+                        }
+
+                        (Get-SegmentKey -DestinationType $destinationType -DestinationHost $destinationHost -SegmentPorts @($_.ports) -SegmentProtocol $protocol) -eq $segmentKey
+                    }
+                ) | Select-Object -First 1
+            }
+        } -IsVerified {
+            param($state)
+            $null -ne $state.MatchingSegment
+        } -SetState {
+            param($state)
+            Invoke-MgGraphRequest -Method POST -Uri "/beta/applications/$ApplicationId/onPremisesPublishing/segmentsConfiguration/microsoft.graph.ipSegmentConfiguration/applicationSegments" -Body $body -ContentType 'application/json' -OutputType PSObject | Out-Null
+        }
+
+        if ($null -ne $segmentState.MatchingSegment) {
+            if ($null -eq ($script:ExistingSegmentIndex["$($segment.DestinationType.ToLowerInvariant()):$($segment.DestinationHost.ToLowerInvariant())"] | Where-Object { $_.ApplicationId -eq $ApplicationId } | Select-Object -First 1)) {
+                $addedSegments += "$($segment.DestinationType):$($segment.DestinationHost)"
+                Write-Success "Added segment $($segment.DestinationType):$($segment.DestinationHost)"
+            } else {
+                Write-Info "Segment already exists: $($segment.DestinationType) $($segment.DestinationHost)"
+            }
+        }
     }
 
-    return @($addedSegments)
+    return [string[]]@($addedSegments)
 }
 
 function Add-UserAssignments {
@@ -571,8 +964,49 @@ function Add-UserAssignments {
             appRoleId   = $UserAppRoleId
         } | ConvertTo-Json
 
-        Invoke-MgGraphRequest -Method POST -Uri "/beta/servicePrincipals/$ServicePrincipalId/appRoleAssignedTo" -Body $body -ContentType 'application/json' -OutputType PSObject | Out-Null
+        Invoke-VerifiedAction -Action "Assign user '$upn'" -GetState {
+            $assignments = Get-GraphCollection -Uri "/beta/servicePrincipals/$ServicePrincipalId/appRoleAssignedTo?`$select=principalId,principalType,appRoleId"
+
+            [pscustomobject]@{
+                Assignments = @($assignments)
+                MatchingAssignment = @(
+                    $assignments |
+                    Where-Object {
+                        $_.principalType -eq 'User' -and
+                        $_.appRoleId -eq $UserAppRoleId -and
+                        $_.principalId -eq $user.id
+                    }
+                ) | Select-Object -First 1
+            }
+        } -IsVerified {
+            param($assignments)
+            $null -ne $assignments.MatchingAssignment
+        } -SetState {
+            param($assignments)
+            try {
+                Invoke-MgGraphRequest -Method POST -Uri "/beta/servicePrincipals/$ServicePrincipalId/appRoleAssignedTo" -Body $body -ContentType 'application/json' -OutputType PSObject | Out-Null
+            } catch {
+                $postAssignments = Get-GraphCollection -Uri "/beta/servicePrincipals/$ServicePrincipalId/appRoleAssignedTo?`$select=principalId,principalType,appRoleId"
+                $postCheck = [pscustomobject]@{
+                    Assignments = @($postAssignments)
+                    MatchingAssignment = @(
+                        $postAssignments |
+                        Where-Object {
+                            $_.principalType -eq 'User' -and
+                            $_.appRoleId -eq $UserAppRoleId -and
+                            $_.principalId -eq $user.id
+                        }
+                    ) | Select-Object -First 1
+                }
+
+                if ($null -eq $postCheck.MatchingAssignment) {
+                    throw
+                }
+            }
+        } | Out-Null
+
         $newAssignments += $upn
+        $assignedPrincipalIds += $user.id
         Write-Success "Assigned '$upn'"
     }
 
@@ -587,6 +1021,9 @@ $inputDescription = if ($script:InputMode -eq 'Csv') { 'CSV row(s)' } else { 'di
 
 Write-Info "Loaded $($inputRows.Count) $inputDescription and identified $($targets.Count) app target(s)"
 
+$script:ExistingSegmentIndex = Get-ExistingPrivateAccessSegments
+Write-Info "Indexed $($script:ExistingSegmentIndex.Keys.Count) existing Private Access destination(s)"
+
 $connectorGroup = Resolve-ConnectorGroup
 Write-Info "Using connector group '$($connectorGroup.name)'"
 
@@ -599,25 +1036,27 @@ for ($index = 0; $index -lt $targets.Count; $index++) {
     $appId = $null
     $servicePrincipalId = $null
     $created = $false
+    $existingDisplayNameApp = $null
 
     Write-Host ''
     Write-Host ('[{0}/{1}] {2}' -f ($index + 1), $targets.Count, $displayName) -ForegroundColor Yellow
 
     try {
+        $existingDisplayNameApp = Get-ExistingApplicationByDisplayName -DisplayName $displayName
+        Assert-TargetDoesNotExistOnDifferentApplication -Target $target -DisplayName $displayName -CurrentApplicationId $existingDisplayNameApp.id
+
         $app = Get-OrCreatePrivateAccessApplication -DisplayName $displayName
         $applicationId = $app.Application.id
         $appId = $app.Application.appId
         $servicePrincipalId = $app.ServicePrincipal.id
         $created = $app.Created
 
-        $connectorGroupBody = @{
-            '@odata.id' = "https://graph.microsoft.com/beta/onPremisesPublishingProfiles/applicationProxy/connectorGroups/$($connectorGroup.id)"
-        } | ConvertTo-Json
+        Assert-TargetDoesNotExistOnDifferentApplication -Target $target -DisplayName $displayName -CurrentApplicationId $applicationId
 
-        Invoke-MgGraphRequest -Method PUT -Uri "/beta/applications/$applicationId/connectorGroup/`$ref" -Body $connectorGroupBody -ContentType 'application/json' -OutputType PSObject | Out-Null
-        Write-Success "Assigned connector group '$($connectorGroup.name)'"
+        Set-ApplicationConnectorGroup -ApplicationId $applicationId -ConnectorGroup $connectorGroup -DisplayName $displayName
 
-        $addedSegments = Add-ApplicationSegments -ApplicationId $applicationId -Segments $target.Segments -SegmentPorts $Ports -SegmentProtocol $Protocol
+        $addedSegments = @(Add-ApplicationSegments -ApplicationId $applicationId -Segments $target.Segments -SegmentPorts $Ports -SegmentProtocol $Protocol)
+        Update-ExistingSegmentIndex -ApplicationId $applicationId -AppId $appId -DisplayName $displayName -AddedSegments $addedSegments
         $assignedUsers = Add-UserAssignments -ServicePrincipalId $servicePrincipalId -UserAppRoleId $app.UserAppRoleId -UserPrincipalNames $target.UserPrincipalNames
 
         $results += [pscustomobject]@{
