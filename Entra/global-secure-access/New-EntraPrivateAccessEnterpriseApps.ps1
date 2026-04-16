@@ -29,8 +29,9 @@
     Optional FQDN segment when not using CsvPath.
 
 .PARAMETER Ports
-    One or more port ranges to apply to every created application segment.
-    Example: 3389-3389, 445-445, 443-443.
+    One or more ports or port ranges to apply to every created application segment.
+    Single ports such as 3389 are normalized to 3389-3389 before Graph calls.
+    Example: 3389, 3389-3389, 445, 445-445, 443.
 
 .PARAMETER Protocol
     Protocol to apply to every created application segment.
@@ -51,7 +52,7 @@
     .\New-EntraPrivateAccessEnterpriseApps.ps1 -CsvPath .\private-access.csv -Ports "443-443" -Protocol tcp -ConnectorGroupId "daf709c2-6072-414f-b08c-bb2a80c631c"
 
 .EXAMPLE
-    .\New-EntraPrivateAccessEnterpriseApps.ps1 -UserPrincipalName "user1@contoso.com","user2@contoso.com" -FQDN "app.contoso.internal" -IP "10.0.0.10" -Ports "443-443"
+    .\New-EntraPrivateAccessEnterpriseApps.ps1 -UserPrincipalName "user1@contoso.com","user2@contoso.com" -FQDN "app.contoso.internal" -IP "10.0.0.10" -Port "443"
 
 .NOTES
     Requires PowerShell 7.0+ and Microsoft.Graph.Authentication.
@@ -83,6 +84,7 @@ param(
     [string]$FQDN,
 
     [Parameter(Mandatory = $true)]
+    [Alias('Port')]
     [ValidateNotNullOrEmpty()]
     [string[]]$Ports,
 
@@ -109,7 +111,6 @@ $script:RequiredScopes = @(
     'AppRoleAssignment.ReadWrite.All'
 )
 $script:UserCache = @{}
-$script:ApplicationsById = @{}
 $script:ExistingSegmentIndex = @{}
 $script:ReadinessRetryCount = 15
 $script:ReadinessRetryDelaySeconds = 2
@@ -271,6 +272,59 @@ function ConvertTo-NormalizedText {
     return $text.Trim()
 }
 
+function Get-NormalizedSegmentPorts {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$PortValues,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Context = 'Ports'
+    )
+
+    $normalizedPorts = @()
+
+    foreach ($portValue in @($PortValues)) {
+        $text = ConvertTo-NormalizedText -Value $portValue
+        if (-not $text) {
+            continue
+        }
+
+        foreach ($candidate in @($text -split ',')) {
+            $portText = ConvertTo-NormalizedText -Value $candidate
+            if (-not $portText) {
+                continue
+            }
+
+            $match = [regex]::Match($portText, '^(?<start>\d{1,5})(?:\s*-\s*(?<end>\d{1,5}))?$')
+            if (-not $match.Success) {
+                throw "$Context value '$portText' is not supported. Use a single port like '443' or a range like '3389-3390'."
+            }
+
+            $startPort = [int]$match.Groups['start'].Value
+            $endPort = if ($match.Groups['end'].Success) { [int]$match.Groups['end'].Value } else { $startPort }
+
+            if ($startPort -lt 1 -or $startPort -gt 65535 -or $endPort -lt 1 -or $endPort -gt 65535) {
+                throw "$Context value '$portText' is not supported. Ports must be between 1 and 65535."
+            }
+
+            if ($startPort -gt $endPort) {
+                throw "$Context value '$portText' is not supported. Port ranges must be in ascending order."
+            }
+
+            $normalizedPort = "$startPort-$endPort"
+            if ($normalizedPort -notin $normalizedPorts) {
+                $normalizedPorts += $normalizedPort
+            }
+        }
+    }
+
+    if ($normalizedPorts.Count -eq 0) {
+        throw "$Context requires at least one port or port range."
+    }
+
+    return [string[]]@($normalizedPorts)
+}
+
 function Test-BooleanTrue {
     param($Value)
 
@@ -285,37 +339,83 @@ function Test-BooleanTrue {
     return $false
 }
 
-function Convert-IpSegment {
+function Get-SingleIpAddress {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$IpValue
+        [string]$IpValue,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Context
     )
 
-    if ($IpValue.Contains('/')) {
-        return [pscustomobject]@{
-            DestinationType = 'ipRangeCidr'
-            DestinationHost = $IpValue
-        }
-    }
-
-    if ($IpValue.Contains('-')) {
-        return [pscustomobject]@{
-            DestinationType = 'ipRange'
-            DestinationHost = $IpValue
-        }
+    $normalizedIp = ConvertTo-NormalizedText -Value $IpValue
+    if (-not $normalizedIp) {
+        return $null
     }
 
     $parsedAddress = $null
-    if ([System.Net.IPAddress]::TryParse($IpValue, [ref]$parsedAddress)) {
-        $cidrSuffix = if ($parsedAddress.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetworkV6) { 128 } else { 32 }
+    if ([System.Net.IPAddress]::TryParse($normalizedIp, [ref]$parsedAddress)) {
+        return $parsedAddress.IPAddressToString
+    }
 
-        return [pscustomobject]@{
-            DestinationType = 'ipRangeCidr'
-            DestinationHost = "$IpValue/$cidrSuffix"
+    $unsupportedMessage = if ($Context) {
+        "$Context '$IpValue' is not supported. Use a single IP like '11.22.33.44' or a host-sized CIDR like '11.22.33.44/32'."
+    }
+
+    $match = [regex]::Match($normalizedIp, '^(?<address>[^/]+)/(?<prefixLength>\d{1,3})$')
+    if (-not $match.Success) {
+        if ($unsupportedMessage) {
+            throw $unsupportedMessage
+        }
+
+        return $null
+    }
+
+    if (-not [System.Net.IPAddress]::TryParse($match.Groups['address'].Value, [ref]$parsedAddress)) {
+        if ($unsupportedMessage) {
+            throw $unsupportedMessage
+        }
+
+        return $null
+    }
+
+    $expectedPrefix = if ($parsedAddress.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetworkV6) { 128 } else { 32 }
+    if ([int]$match.Groups['prefixLength'].Value -ne $expectedPrefix) {
+        if ($unsupportedMessage) {
+            throw $unsupportedMessage
+        }
+
+        return $null
+    }
+
+    return $parsedAddress.IPAddressToString
+}
+
+function Get-SegmentDestinationKey {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationType,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationHost
+    )
+
+    $normalizedType = ConvertTo-NormalizedText -Value $DestinationType
+    $normalizedHost = ConvertTo-NormalizedText -Value $DestinationHost
+
+    if (-not $normalizedType -or -not $normalizedHost) {
+        return $null
+    }
+
+    if ($normalizedType -in @('ipAddress', 'ipRangeCidr')) {
+        $singleIp = Get-SingleIpAddress -IpValue $normalizedHost
+        if ($singleIp) {
+            $normalizedType = 'ipAddress'
+            $normalizedHost = $singleIp
         }
     }
 
-    throw "IP value '$IpValue' is not a valid IP address, range, or CIDR block."
+    return "$($normalizedType.ToLowerInvariant()):$($normalizedHost.ToLowerInvariant())"
 }
 
 function Get-InputRows {
@@ -331,6 +431,13 @@ function Get-InputRows {
 
         if ($missingHeaders.Count -gt 0) {
             throw "CSV file '$CsvPath' is missing required columns: $($missingHeaders -join ', ')"
+        }
+
+        for ($index = 0; $index -lt $rows.Count; $index++) {
+            $rowIp = ConvertTo-NormalizedText -Value $rows[$index].IP
+            if ($rowIp) {
+                $rows[$index].IP = Get-SingleIpAddress -IpValue $rowIp -Context "CSV row $($index + 1) IP"
+            }
         }
 
         return $rows
@@ -351,6 +458,10 @@ function Get-InputRows {
 
     if (-not $normalizedIp -and -not $normalizedFqdn) {
         throw 'Direct parameter mode requires -IP, -FQDN, or both.'
+    }
+
+    if ($normalizedIp) {
+        $normalizedIp = Get-SingleIpAddress -IpValue $normalizedIp -Context 'IP'
     }
 
     return @(
@@ -387,13 +498,16 @@ function Get-Targets {
 
         $normalizedIpSegment = $null
         if ($ip) {
-            $normalizedIpSegment = Convert-IpSegment -IpValue $ip
+            $normalizedIpSegment = [pscustomobject]@{
+                DestinationType = 'ipRangeCidr'
+                DestinationHost = if ($ip.Contains(':')) { "$ip/128" } else { "$ip/32" }
+            }
         }
 
         $key = if ($fqdn) {
             "fqdn:$($fqdn.ToLowerInvariant())"
         } else {
-            "ip:$($normalizedIpSegment.DestinationHost.ToLowerInvariant())"
+            "ip:$($ip.ToLowerInvariant())"
         }
 
         if (-not $targets.ContainsKey($key)) {
@@ -671,8 +785,6 @@ function Get-ExistingPrivateAccessSegments {
     $index = @{}
 
     foreach ($application in $applications) {
-        $script:ApplicationsById[$application.id] = $application
-
         try {
             $segments = Get-GraphCollection -Uri "/beta/applications/$($application.id)/onPremisesPublishing/segmentsConfiguration/microsoft.graph.ipSegmentConfiguration/applicationSegments"
         } catch {
@@ -687,7 +799,10 @@ function Get-ExistingPrivateAccessSegments {
                 continue
             }
 
-            $segmentIndexKey = "$($destinationType.ToLowerInvariant()):$($destinationHost.ToLowerInvariant())"
+            $segmentIndexKey = Get-SegmentDestinationKey -DestinationType $destinationType -DestinationHost $destinationHost
+            if (-not $segmentIndexKey) {
+                continue
+            }
 
             if (-not $index.ContainsKey($segmentIndexKey)) {
                 $index[$segmentIndexKey] = @()
@@ -718,7 +833,7 @@ function Assert-TargetDoesNotExistOnDifferentApplication {
     )
 
     foreach ($segment in $Target.Segments.Values) {
-        $segmentIndexKey = "$($segment.DestinationType.ToLowerInvariant()):$($segment.DestinationHost.ToLowerInvariant())"
+        $segmentIndexKey = Get-SegmentDestinationKey -DestinationType $segment.DestinationType -DestinationHost $segment.DestinationHost
 
         if (-not $script:ExistingSegmentIndex.ContainsKey($segmentIndexKey)) {
             continue
@@ -764,7 +879,10 @@ function Update-ExistingSegmentIndex {
 
         $destinationType = $addedSegment.Substring(0, $separatorIndex)
         $destinationHost = $addedSegment.Substring($separatorIndex + 1)
-        $segmentIndexKey = "$($destinationType.ToLowerInvariant()):$($destinationHost.ToLowerInvariant())"
+        $segmentIndexKey = Get-SegmentDestinationKey -DestinationType $destinationType -DestinationHost $destinationHost
+        if (-not $segmentIndexKey) {
+            continue
+        }
 
         if (-not $script:ExistingSegmentIndex.ContainsKey($segmentIndexKey)) {
             $script:ExistingSegmentIndex[$segmentIndexKey] = @()
@@ -797,14 +915,12 @@ function Get-OrCreatePrivateAccessApplication {
 
     if ($applications.Count -eq 1) {
         $application = $applications[0]
-        $script:ApplicationsById[$application.id] = $application
         Write-Info "Reusing existing application '$DisplayName'"
     } else {
         $body = @{ displayName = $DisplayName } | ConvertTo-Json
         $instantiateResult = Invoke-MgGraphRequest -Method POST -Uri "/v1.0/applicationTemplates/$($script:CustomApplicationTemplateId)/instantiate" -Body $body -ContentType 'application/json' -OutputType PSObject
         $application = $instantiateResult.application
         $created = $true
-        $script:ApplicationsById[$application.id] = $application
         Write-Success "Created application '$DisplayName'"
     }
 
@@ -857,8 +973,12 @@ function Get-SegmentKey {
         [string]$SegmentProtocol
     )
 
+    $destinationKey = Get-SegmentDestinationKey -DestinationType $DestinationType -DestinationHost $DestinationHost
+    $separatorIndex = $destinationKey.IndexOf(':')
+    $normalizedType = $destinationKey.Substring(0, $separatorIndex)
+    $normalizedHost = $destinationKey.Substring($separatorIndex + 1)
     $normalizedPorts = @($SegmentPorts | Sort-Object) -join ','
-    return "$($DestinationType.ToLowerInvariant())|$($DestinationHost.ToLowerInvariant())|$($SegmentProtocol.ToLowerInvariant())|$normalizedPorts"
+    return "$normalizedType|$normalizedHost|$($SegmentProtocol.ToLowerInvariant())|$normalizedPorts"
 }
 
 function Add-ApplicationSegments {
@@ -880,6 +1000,7 @@ function Add-ApplicationSegments {
 
     foreach ($segment in @($Segments.Values | Sort-Object -Property DestinationType, DestinationHost)) {
         $segmentKey = Get-SegmentKey -DestinationType $segment.DestinationType -DestinationHost $segment.DestinationHost -SegmentPorts $SegmentPorts -SegmentProtocol $SegmentProtocol
+        $segmentIndexKey = Get-SegmentDestinationKey -DestinationType $segment.DestinationType -DestinationHost $segment.DestinationHost
 
         $body = @{
             destinationHost = $segment.DestinationHost
@@ -917,7 +1038,7 @@ function Add-ApplicationSegments {
         }
 
         if ($null -ne $segmentState.MatchingSegment) {
-            if ($null -eq ($script:ExistingSegmentIndex["$($segment.DestinationType.ToLowerInvariant()):$($segment.DestinationHost.ToLowerInvariant())"] | Where-Object { $_.ApplicationId -eq $ApplicationId } | Select-Object -First 1)) {
+            if ($null -eq ($script:ExistingSegmentIndex[$segmentIndexKey] | Where-Object { $_.ApplicationId -eq $ApplicationId } | Select-Object -First 1)) {
                 $addedSegments += "$($segment.DestinationType):$($segment.DestinationHost)"
                 Write-Success "Added segment $($segment.DestinationType):$($segment.DestinationHost)"
             } else {
@@ -1012,6 +1133,8 @@ function Add-UserAssignments {
 
     return @($newAssignments)
 }
+
+$Ports = Get-NormalizedSegmentPorts -PortValues $Ports -Context 'Ports'
 
 Connect-GraphSession
 

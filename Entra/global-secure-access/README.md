@@ -23,7 +23,11 @@ The [New-EntraPrivateAccessEnterpriseApps.ps1](./New-EntraPrivateAccessEnterpris
 
 It uses only the `Microsoft.Graph.Authentication` module and the `Invoke-MgGraphRequest` cmdlet for Graph operations.
 
-Single IP addresses from the CSV are normalized to `/32` CIDR segments when sent to Graph because that path validated successfully against the live Private Access API.
+IP values are intentionally limited to a single IP address or a host-sized CIDR value such as `10.2.2.174` or `10.2.2.174/32`. The script validates those values up front and throws a clear error before making Graph calls if a row contains another format.
+
+Single IP addresses and host-sized CIDR inputs are both normalized to the same host-sized Graph `ipRangeCidr` segment so reruns treat them as the same destination.
+
+Single ports such as `443` are also accepted on `-Ports` or `-Port` and normalized to `443-443` before calling Graph, so the script is forgiving if you forget the repeated range syntax.
 
 ```powershell
 Connect-MgGraph -Scopes "Directory.ReadWrite.All","NetworkAccess.ReadWrite.All","AppRoleAssignment.ReadWrite.All" -NoWelcome
@@ -38,7 +42,7 @@ Connect-MgGraph -Scopes "Directory.ReadWrite.All","NetworkAccess.ReadWrite.All",
    -UserPrincipalName "user1@contoso.com","user2@contoso.com" `
    -FQDN "app.contoso.internal" `
    -IP "10.0.0.10" `
-   -Ports "443-443"
+   -Port "443"
 ```
 
 Rows are grouped by destination so rerunning the script reuses the same app name, skips existing segments, and adds only missing user assignments.
