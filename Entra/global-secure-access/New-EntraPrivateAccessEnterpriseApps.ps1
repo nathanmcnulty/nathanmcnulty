@@ -23,7 +23,7 @@
     One or more user principal names to assign when not using CsvPath.
 
 .PARAMETER IP
-    Optional IP address, range, or CIDR segment when not using CsvPath.
+    Optional IP address or CIDR segment when not using CsvPath.
 
 .PARAMETER FQDN
     Optional FQDN segment when not using CsvPath.
@@ -339,7 +339,40 @@ function Test-BooleanTrue {
     return $false
 }
 
-function Get-SingleIpAddress {
+function Get-NetworkAddress {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Net.IPAddress]$IpAddress,
+
+        [Parameter(Mandatory = $true)]
+        [int]$PrefixLength
+    )
+
+    $addressBytes = $IpAddress.GetAddressBytes()
+    $networkBytes = [byte[]]::new($addressBytes.Length)
+    $remainingBits = $PrefixLength
+
+    for ($index = 0; $index -lt $addressBytes.Length; $index++) {
+        if ($remainingBits -ge 8) {
+            $networkBytes[$index] = $addressBytes[$index]
+            $remainingBits -= 8
+            continue
+        }
+
+        if ($remainingBits -le 0) {
+            $networkBytes[$index] = 0
+            continue
+        }
+
+        $mask = [byte](((0xFF -shl (8 - $remainingBits)) -band 0xFF))
+        $networkBytes[$index] = [byte]($addressBytes[$index] -band $mask)
+        $remainingBits = 0
+    }
+
+    return [System.Net.IPAddress]::new($networkBytes)
+}
+
+function Get-NormalizedIpDestinationHost {
     param(
         [Parameter(Mandatory = $true)]
         [string]$IpValue,
@@ -359,10 +392,10 @@ function Get-SingleIpAddress {
     }
 
     $unsupportedMessage = if ($Context) {
-        "$Context '$IpValue' is not supported. Use a single IP like '11.22.33.44' or a host-sized CIDR like '11.22.33.44/32'."
+        "$Context '$IpValue' is not supported. Use a single IP like '11.22.33.44' or a CIDR range like '11.22.33.0/24'."
     }
 
-    $match = [regex]::Match($normalizedIp, '^(?<address>[^/]+)/(?<prefixLength>\d{1,3})$')
+    $match = [regex]::Match($normalizedIp, '^(?<address>[^/]+?)\s*/\s*(?<prefixLength>\d{1,3})$')
     if (-not $match.Success) {
         if ($unsupportedMessage) {
             throw $unsupportedMessage
@@ -371,7 +404,8 @@ function Get-SingleIpAddress {
         return $null
     }
 
-    if (-not [System.Net.IPAddress]::TryParse($match.Groups['address'].Value, [ref]$parsedAddress)) {
+    $baseAddress = ConvertTo-NormalizedText -Value $match.Groups['address'].Value
+    if (-not [System.Net.IPAddress]::TryParse($baseAddress, [ref]$parsedAddress)) {
         if ($unsupportedMessage) {
             throw $unsupportedMessage
         }
@@ -379,8 +413,9 @@ function Get-SingleIpAddress {
         return $null
     }
 
-    $expectedPrefix = if ($parsedAddress.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetworkV6) { 128 } else { 32 }
-    if ([int]$match.Groups['prefixLength'].Value -ne $expectedPrefix) {
+    $prefixLength = [int]$match.Groups['prefixLength'].Value
+    $maxPrefix = if ($parsedAddress.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetworkV6) { 128 } else { 32 }
+    if ($prefixLength -lt 0 -or $prefixLength -gt $maxPrefix) {
         if ($unsupportedMessage) {
             throw $unsupportedMessage
         }
@@ -388,7 +423,12 @@ function Get-SingleIpAddress {
         return $null
     }
 
-    return $parsedAddress.IPAddressToString
+    if ($prefixLength -eq $maxPrefix) {
+        return $parsedAddress.IPAddressToString
+    }
+
+    $networkAddress = Get-NetworkAddress -IpAddress $parsedAddress -PrefixLength $prefixLength
+    return "$($networkAddress.IPAddressToString)/$prefixLength"
 }
 
 function Get-SegmentDestinationKey {
@@ -408,10 +448,15 @@ function Get-SegmentDestinationKey {
     }
 
     if ($normalizedType -in @('ipAddress', 'ipRangeCidr')) {
-        $singleIp = Get-SingleIpAddress -IpValue $normalizedHost
-        if ($singleIp) {
-            $normalizedType = 'ipAddress'
-            $normalizedHost = $singleIp
+        $normalizedIp = Get-NormalizedIpDestinationHost -IpValue $normalizedHost
+        if ($normalizedIp) {
+            if ($normalizedIp.Contains('/')) {
+                $normalizedType = 'ipRangeCidr'
+                $normalizedHost = $normalizedIp
+            } else {
+                $normalizedType = 'ipAddress'
+                $normalizedHost = $normalizedIp
+            }
         }
     }
 
@@ -436,7 +481,7 @@ function Get-InputRows {
         for ($index = 0; $index -lt $rows.Count; $index++) {
             $rowIp = ConvertTo-NormalizedText -Value $rows[$index].IP
             if ($rowIp) {
-                $rows[$index].IP = Get-SingleIpAddress -IpValue $rowIp -Context "CSV row $($index + 1) IP"
+                $rows[$index].IP = Get-NormalizedIpDestinationHost -IpValue $rowIp -Context "CSV row $($index + 1) IP"
             }
         }
 
@@ -461,7 +506,7 @@ function Get-InputRows {
     }
 
     if ($normalizedIp) {
-        $normalizedIp = Get-SingleIpAddress -IpValue $normalizedIp -Context 'IP'
+        $normalizedIp = Get-NormalizedIpDestinationHost -IpValue $normalizedIp -Context 'IP'
     }
 
     return @(
@@ -500,7 +545,13 @@ function Get-Targets {
         if ($ip) {
             $normalizedIpSegment = [pscustomobject]@{
                 DestinationType = 'ipRangeCidr'
-                DestinationHost = if ($ip.Contains(':')) { "$ip/128" } else { "$ip/32" }
+                DestinationHost = if ($ip.Contains('/')) {
+                    $ip
+                } elseif ($ip.Contains(':')) {
+                    "$ip/128"
+                } else {
+                    "$ip/32"
+                }
             }
         }
 

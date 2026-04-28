@@ -23,9 +23,9 @@ The [New-EntraPrivateAccessEnterpriseApps.ps1](./New-EntraPrivateAccessEnterpris
 
 It uses only the `Microsoft.Graph.Authentication` module and the `Invoke-MgGraphRequest` cmdlet for Graph operations.
 
-IP values are intentionally limited to a single IP address or a host-sized CIDR value such as `10.2.2.174` or `10.2.2.174/32`. The script validates those values up front and throws a clear error before making Graph calls if a row contains another format.
+IP values accept either a single IP address or a CIDR value such as `10.2.2.174`, `10.2.2.174/32`, or `10.2.2.0/24`. The script validates those values up front and throws a clear error before making Graph calls if a row contains another format.
 
-Single IP addresses and host-sized CIDR inputs are both normalized to the same host-sized Graph `ipRangeCidr` segment so reruns treat them as the same destination.
+Single IP addresses and host-sized CIDR inputs are both normalized to the same host-sized Graph `ipRangeCidr` segment so reruns treat them as the same destination. Wider CIDRs are normalized to their canonical network prefix and kept as `ipRangeCidr` segments.
 
 Single ports such as `443` are also accepted on `-Ports` or `-Port` and normalized to `443-443` before calling Graph, so the script is forgiving if you forget the repeated range syntax.
 
