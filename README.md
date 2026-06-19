@@ -2,7 +2,7 @@
 # About Me
 Hi, my name is Nathan McNulty, and I am passionate about learning and sharing how to design and implement secure solutions that provide the best user experiences possible.
 
-I am a Microsoft MVP in Security and a Practice Lead for Patriot Consulting primarily helping our clients securely implement Azure, Entra, Defender, and Intune. I started my career on Help Desk for a civil engineering firm where I quickly became the Enterprise Desktop Administrator. I later took a role as the Client Architect for a large school district of roughly 50K users, spending the last several years there building our security program from the ground up. I have also worked in critical infrastructure and several non-profits in addition to working with dozens of organizations from many different sectors.
+I am a Microsoft MVP in Security and a Principal Security Solutions Architect for Patriot Consulting primarily helping our clients securely implement Azure, Entra, Defender, and Intune. I started my career on Help Desk for a civil engineering firm where I quickly became the Enterprise Desktop Administrator. I later took a role as the Client Architect for a large school district of roughly 50K users, spending the last several years there building our security program from the ground up. I have also worked in critical infrastructure and several non-profits in addition to working with hundreds of organizations from many different sectors over the last 5 years.
 
 #
 # Follow me :)
