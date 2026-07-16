@@ -3,7 +3,6 @@
     "contentVersion": "1.0.0.0",
     "parameters": {
         "Emergency Access Group Object ID": {
-            "defaultValue": "55555555-5555-5555-5555-555555555555",
             "type": "string",
             "metadata": {
                 "description": "GUID of emergency access security group"
@@ -15,10 +14,27 @@
             "metadata": {
                 "description": "Name of Logic App resource to be deployed"
             }
+        },
+        "Workspace Name": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the existing Log Analytics workspace with Microsoft Sentinel enabled"
+            }
+        },
+        "Workspace Resource Group": {
+            "type": "string",
+            "metadata": {
+                "description": "Resource group containing the existing Microsoft Sentinel workspace"
+            }
         }
     },
     "variables": {
-        "SentinelAlertConnectionName": "[concat('azuresentinel-', parameters('Logic App Name'))]"
+        "SentinelAlertConnectionName": "[concat('azuresentinel-', parameters('Logic App Name'))]",
+        "analyticsRuleId": "07735cad-7c80-4839-9552-a65cb124f96e",
+        "automationRuleId": "d8d4961f-96ee-481f-8ba8-d5f26b883a59",
+        "analyticsRuleResourceId": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', parameters('Workspace Resource Group'), '/providers/Microsoft.OperationalInsights/workspaces/', parameters('Workspace Name'), '/providers/Microsoft.SecurityInsights/alertRules/', variables('analyticsRuleId'))]",
+        "logicAppResourceId": "[resourceId('Microsoft.Logic/workflows', parameters('Logic App Name'))]",
+        "query": "[concat('AuditLogs\n| where Result =~ \"success\"\n| where OperationName in (\"Add conditional access policy\", \"Update conditional access policy\")\n| where Identity != \"', parameters('Logic App Name'), '\"\n| extend CAPolicyId = tostring(todynamic(TargetResources)[0].id), ActorIdentity = Identity\n| where isnotempty(CAPolicyId)\n| project TimeGenerated, CAPolicyId, OperationName, ActorIdentity, CorrelationId')]"
     },
     "resources": [
         {
@@ -40,9 +56,9 @@
         },
         {
             "type": "Microsoft.Logic/workflows",
-            "apiVersion": "2017-07-01",
+            "apiVersion": "2019-05-01",
             "name": "[parameters('Logic App Name')]",
-            "location": "westus2",
+            "location": "[resourceGroup().location]",
             "dependsOn": [
                 "[resourceId('Microsoft.Web/connections', variables('SentinelAlertConnectionName'))]"
             ],
@@ -56,7 +72,6 @@
                     "contentVersion": "1.0.0.0",
                     "parameters": {
                         "EmergencyAccountsGroupObjectId": {
-                            "defaultValue": "[parameters('Emergency Access Group Object ID')]",
                             "type": "String"
                         },
                         "$connections": {
@@ -105,47 +120,20 @@
                                 "schema": {
                                     "type": "object",
                                     "properties": {
-                                        "Search Query Results Overall Count": {
-                                            "type": "string"
-                                        },
-                                        "Data Sources": {
-                                            "type": "string"
-                                        },
-                                        "Query": {
-                                            "type": "string"
-                                        },
-                                        "OriginalQuery": {
-                                            "type": "string"
-                                        },
-                                        "Query Start Time UTC": {
-                                            "type": "string"
-                                        },
-                                        "Query End Time UTC": {
-                                            "type": "string"
-                                        },
-                                        "Custom Details": {
-                                            "type": "string"
-                                        },
-                                        "Analytic Rule Ids": {
-                                            "type": "string"
-                                        },
-                                        "Event Grouping": {
-                                            "type": "string"
-                                        },
-                                        "Analytic Rule Name": {
-                                            "type": "string"
-                                        },
-                                        "ProcessedBySentinel": {
-                                            "type": "string"
-                                        },
-                                        "Alert generation status": {
-                                            "type": "string"
+                                        "CAPolicyId": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "string"
+                                            }
                                         }
-                                    }
+                                    },
+                                    "required": [
+                                        "CAPolicyId"
+                                    ]
                                 }
                             }
                         },
-                        "Check_for_exclusion_of_emergency_access_group_from_policy-copy": {
+                        "Check_for_exclusion_of_emergency_access_group_from_policy": {
                             "actions": {},
                             "runAfter": {
                                 "Get_CA_policy": [
@@ -165,7 +153,7 @@
                                             "body": {
                                                 "conditions": {
                                                     "users": {
-                                                        "excludeGroups": "@union(array(parameters('EmergencyAccountsGroupObjectId')),body('Get_CA_policy')?['conditions']?['users']?['excludeGroups'])"
+                                                        "excludeGroups": "@union(array(parameters('EmergencyAccountsGroupObjectId')), coalesce(body('Get_CA_policy')?['conditions']?['users']?['excludeGroups'], json('[]')))"
                                                     }
                                                 }
                                             },
@@ -174,28 +162,6 @@
                                                 "audience": "https://graph.microsoft.com"
                                             }
                                         }
-                                    },
-                                    "Check_status_code_for_success-copy": {
-                                        "actions": {},
-                                        "runAfter": {
-                                            "Exclude_emergency_access_group": [
-                                                "Succeeded"
-                                            ]
-                                        },
-                                        "else": {
-                                            "actions": {}
-                                        },
-                                        "expression": {
-                                            "and": [
-                                                {
-                                                    "equals": [
-                                                        "@outputs('Exclude_emergency_access_group')?['statusCode']",
-                                                        204
-                                                    ]
-                                                }
-                                            ]
-                                        },
-                                        "type": "If"
                                     }
                                 }
                             },
@@ -204,7 +170,7 @@
                                     {
                                         "contains": [
                                             "@body('Get_CA_policy')?['conditions']?['users']?['excludeGroups']",
-                                            "@parameters('EmergencyAccountsGroupObjectID')"
+                                            "@parameters('EmergencyAccountsGroupObjectId')"
                                         ]
                                     }
                                 ]
@@ -215,6 +181,9 @@
                     "outputs": {}
                 },
                 "parameters": {
+                    "EmergencyAccountsGroupObjectId": {
+                        "value": "[parameters('Emergency Access Group Object ID')]"
+                    },
                     "$connections": {
                         "value": {
                             "azuresentinel": {
@@ -231,6 +200,168 @@
                     }
                 }
             }
+        },
+        {
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2022-09-01",
+            "name": "deploy-emergency-access-sentinel-content",
+            "resourceGroup": "[parameters('Workspace Resource Group')]",
+            "dependsOn": [
+                "[variables('logicAppResourceId')]"
+            ],
+            "properties": {
+                "mode": "Incremental",
+                "expressionEvaluationOptions": {
+                    "scope": "inner"
+                },
+                "parameters": {
+                    "workspaceName": {
+                        "value": "[parameters('Workspace Name')]"
+                    },
+                    "query": {
+                        "value": "[variables('query')]"
+                    },
+                    "analyticsRuleId": {
+                        "value": "[variables('analyticsRuleId')]"
+                    },
+                    "automationRuleId": {
+                        "value": "[variables('automationRuleId')]"
+                    },
+                    "analyticsRuleResourceId": {
+                        "value": "[variables('analyticsRuleResourceId')]"
+                    },
+                    "logicAppResourceId": {
+                        "value": "[variables('logicAppResourceId')]"
+                    },
+                    "tenantId": {
+                        "value": "[subscription().tenantId]"
+                    }
+                },
+                "template": {
+                    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "workspaceName": {
+                            "type": "string"
+                        },
+                        "query": {
+                            "type": "string"
+                        },
+                        "analyticsRuleId": {
+                            "type": "string"
+                        },
+                        "automationRuleId": {
+                            "type": "string"
+                        },
+                        "analyticsRuleResourceId": {
+                            "type": "string"
+                        },
+                        "logicAppResourceId": {
+                            "type": "string"
+                        },
+                        "tenantId": {
+                            "type": "string"
+                        }
+                    },
+                    "resources": [
+                        {
+                            "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+                            "apiVersion": "2022-10-01-preview",
+                            "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/', parameters('analyticsRuleId'))]",
+                            "kind": "NRT",
+                            "properties": {
+                                "displayName": "Conditional Access policy changed - enforce emergency access exclusion",
+                                "description": "Detects successful Conditional Access policy creation or modification and exposes the policy ID for remediation.",
+                                "severity": "Informational",
+                                "enabled": true,
+                                "query": "[parameters('query')]",
+                                "suppressionDuration": "PT5H",
+                                "suppressionEnabled": false,
+                                "tactics": [],
+                                "techniques": [],
+                                "eventGroupingSettings": {
+                                    "aggregationKind": "AlertPerResult"
+                                },
+                                "incidentConfiguration": {
+                                    "createIncident": false,
+                                    "groupingConfiguration": {
+                                        "enabled": false,
+                                        "reopenClosedIncident": false,
+                                        "lookbackDuration": "PT5H",
+                                        "matchingMethod": "AllEntities",
+                                        "groupByEntities": [],
+                                        "groupByAlertDetails": [],
+                                        "groupByCustomDetails": []
+                                    }
+                                },
+                                "customDetails": {
+                                    "CAPolicyId": "CAPolicyId",
+                                    "OperationName": "OperationName",
+                                    "ActorIdentity": "ActorIdentity",
+                                    "CorrelationId": "CorrelationId"
+                                },
+                                "alertDetailsOverride": {
+                                    "alertDisplayNameFormat": "Conditional Access policy changed: {{CAPolicyId}}",
+                                    "alertDescriptionFormat": "{{OperationName}} was performed by {{ActorIdentity}}. The emergency access exclusion will be checked."
+                                }
+                            }
+                        },
+                        {
+                            "type": "Microsoft.OperationalInsights/workspaces/providers/automationRules",
+                            "apiVersion": "2025-09-01",
+                            "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/', parameters('automationRuleId'))]",
+                            "dependsOn": [
+                                "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspaceName'), 'Microsoft.SecurityInsights', parameters('analyticsRuleId'))]"
+                            ],
+                            "properties": {
+                                "displayName": "Run emergency access exclusion playbook",
+                                "order": 1,
+                                "triggeringLogic": {
+                                    "isEnabled": true,
+                                    "triggersOn": "Alerts",
+                                    "triggersWhen": "Created",
+                                    "conditions": [
+                                        {
+                                            "conditionType": "Property",
+                                            "conditionProperties": {
+                                                "propertyName": "AlertAnalyticRuleIds",
+                                                "operator": "Contains",
+                                                "propertyValues": [
+                                                    "[parameters('analyticsRuleResourceId')]"
+                                                ]
+                                            }
+                                        }
+                                    ]
+                                },
+                                "actions": [
+                                    {
+                                        "order": 1,
+                                        "actionType": "RunPlaybook",
+                                        "actionConfiguration": {
+                                            "tenantId": "[parameters('tenantId')]",
+                                            "logicAppResourceId": "[parameters('logicAppResourceId')]"
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
         }
-    ]
+    ],
+    "outputs": {
+        "Logic App Resource ID": {
+            "type": "string",
+            "value": "[variables('logicAppResourceId')]"
+        },
+        "Managed Identity Object ID": {
+            "type": "string",
+            "value": "[reference(variables('logicAppResourceId'), '2019-05-01', 'Full').identity.principalId]"
+        },
+        "Analytics Rule Resource ID": {
+            "type": "string",
+            "value": "[variables('analyticsRuleResourceId')]"
+        }
+    }
 }

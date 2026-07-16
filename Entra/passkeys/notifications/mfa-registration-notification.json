@@ -1,0 +1,419 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "Workspace Name": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the existing Log Analytics workspace with Microsoft Sentinel enabled"
+      }
+    },
+    "Workspace Resource Group": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource group containing the existing Microsoft Sentinel workspace"
+      }
+    },
+    "Logic App Name": {
+      "type": "string",
+      "defaultValue": "mfa-registration-notification",
+      "metadata": {
+        "description": "Name of the Logic App playbook"
+      }
+    },
+    "Sender Mailbox": {
+      "type": "string",
+      "metadata": {
+        "description": "Exchange Online mailbox used as the Microsoft Graph sendMail sender"
+      }
+    },
+    "Email Subject Prefix": {
+      "type": "string",
+      "defaultValue": "[Security notification] MFA method registered:",
+      "metadata": {
+        "description": "Prefix placed before the authentication method in the email subject"
+      }
+    },
+    "Helpdesk Contact": {
+      "type": "string",
+      "defaultValue": "the helpdesk",
+      "metadata": {
+        "description": "Helpdesk contact text included in the notification body"
+      }
+    }
+  },
+  "variables": {
+    "sentinelConnectionName": "[concat('azuresentinel-', parameters('Logic App Name'))]",
+    "analyticsRuleId": "b55ce4a2-36c4-4a8d-98f7-87937fb42d87",
+    "automationRuleId": "2cfa65c8-bf9f-4ad4-a14e-53e691e75c02",
+    "analyticsRuleResourceId": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', parameters('Workspace Resource Group'), '/providers/Microsoft.OperationalInsights/workspaces/', parameters('Workspace Name'), '/providers/Microsoft.SecurityInsights/alertRules/', variables('analyticsRuleId'))]",
+    "logicAppResourceId": "[resourceId('Microsoft.Logic/workflows', parameters('Logic App Name'))]",
+    "query": "AuditLogs\n| where Result =~ \"success\"\n| where OperationName has \"Add Passkey\" or OperationName == \"User registered security info\"\n| extend TargetResources = todynamic(TargetResources), AdditionalDetails = todynamic(AdditionalDetails), InitiatedBy = todynamic(InitiatedBy)\n| extend RecipientEmail = tostring(TargetResources[0].userPrincipalName), SourceIPAddress = tostring(InitiatedBy.user.ipAddress)\n| mv-apply Detail = AdditionalDetails on (\n    summarize AuthenticationMethod = take_anyif(tostring(Detail.value), tostring(Detail.key) == \"AuthenticationMethod\")\n)\n| extend AuthenticationMethod = case(\n    OperationName has \"Add Passkey\", replace_string(OperationName, \"Add \", \"\"),\n    AuthenticationMethod\n)\n| where OperationName has \"Add Passkey\" or (isnotempty(AuthenticationMethod) and AuthenticationMethod !~ \"Passkey\")\n| where isnotempty(RecipientEmail) and RecipientEmail !contains \"#EXT#\"\n| extend AccountName = tostring(split(RecipientEmail, \"@\")[0]), AccountUPNSuffix = tostring(split(RecipientEmail, \"@\")[1])\n| extend RegistrationTime = strcat(format_datetime(TimeGenerated, \"yyyy-MM-dd HH:mm:ss\"), \" UTC\")\n| project TimeGenerated, RecipientEmail, AccountName, AccountUPNSuffix, AuthenticationMethod, RegistrationTime, SourceIPAddress, OperationName, CorrelationId"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Web/connections",
+      "apiVersion": "2016-06-01",
+      "name": "[variables('sentinelConnectionName')]",
+      "location": "[resourceGroup().location]",
+      "kind": "V1",
+      "properties": {
+        "displayName": "[variables('sentinelConnectionName')]",
+        "customParameterValues": {},
+        "api": {
+          "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+        },
+        "connectionState": "Enabled",
+        "parameterValueSet": null,
+        "parameterValueType": "Alternative"
+      }
+    },
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('Logic App Name')]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/connections', variables('sentinelConnectionName'))]"
+      ],
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "state": "Enabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "SenderMailbox": {
+              "type": "String"
+            },
+            "EmailSubjectPrefix": {
+              "type": "String"
+            },
+            "HelpdeskContact": {
+              "type": "String"
+            },
+            "$connections": {
+              "type": "Object"
+            }
+          },
+          "triggers": {
+            "Microsoft_Sentinel_alert": {
+              "type": "ApiConnectionWebhook",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                  }
+                },
+                "body": {
+                  "callback_url": "@listCallbackUrl()"
+                },
+                "path": "/subscribe"
+              }
+            }
+          },
+          "actions": {
+            "Parse_Custom_Details": {
+              "type": "ParseJson",
+              "runAfter": {},
+              "inputs": {
+                "content": "@triggerBody()?['ExtendedProperties']?['Custom Details']",
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "RecipientEmail": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "AuthenticationMethod": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "RegistrationTime": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "SourceIPAddress": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "OperationName": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "CorrelationId": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "RecipientEmail",
+                    "AuthenticationMethod",
+                    "RegistrationTime",
+                    "OperationName",
+                    "CorrelationId"
+                  ]
+                }
+              }
+            },
+            "Send_notification_with_Microsoft_Graph": {
+              "type": "Http",
+              "runAfter": {
+                "Parse_Custom_Details": [
+                  "Succeeded"
+                ]
+              },
+              "inputs": {
+                "uri": "@{concat('https://graph.microsoft.com/v1.0/users/', encodeUriComponent(parameters('SenderMailbox')), '/sendMail')}",
+                "method": "POST",
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "body": {
+                  "message": {
+                    "subject": "@{concat(parameters('EmailSubjectPrefix'), ' ', string(first(body('Parse_Custom_Details')?['AuthenticationMethod'])))}",
+                    "body": {
+                      "contentType": "Text",
+                      "content": "@{concat('The following MFA method was registered for your account.', decodeUriComponent('%0A%0A'), 'MFA method: ', string(first(body('Parse_Custom_Details')?['AuthenticationMethod'])), decodeUriComponent('%0A'), 'Time: ', string(first(body('Parse_Custom_Details')?['RegistrationTime'])), decodeUriComponent('%0A'), 'Source IP address: ', if(empty(body('Parse_Custom_Details')?['SourceIPAddress']), 'Not recorded', string(first(body('Parse_Custom_Details')?['SourceIPAddress']))), decodeUriComponent('%0A'), 'Operation: ', string(first(body('Parse_Custom_Details')?['OperationName'])), decodeUriComponent('%0A'), 'Correlation ID: ', string(first(body('Parse_Custom_Details')?['CorrelationId'])), decodeUriComponent('%0A%0A'), 'If you registered this MFA method, no action is required. If you did not, contact ', parameters('HelpdeskContact'), ' immediately.')}"
+                    },
+                    "toRecipients": [
+                      {
+                        "emailAddress": {
+                          "address": "@{string(first(body('Parse_Custom_Details')?['RecipientEmail']))}"
+                        }
+                      }
+                    ]
+                  },
+                  "saveToSentItems": true
+                },
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "audience": "https://graph.microsoft.com"
+                }
+              }
+            }
+          },
+          "outputs": {}
+        },
+        "parameters": {
+          "SenderMailbox": {
+            "value": "[parameters('Sender Mailbox')]"
+          },
+          "EmailSubjectPrefix": {
+            "value": "[parameters('Email Subject Prefix')]"
+          },
+          "HelpdeskContact": {
+            "value": "[parameters('Helpdesk Contact')]"
+          },
+          "$connections": {
+            "value": {
+              "azuresentinel": {
+                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', variables('sentinelConnectionName'))]",
+                "connectionName": "[variables('sentinelConnectionName')]",
+                "connectionProperties": {
+                  "authentication": {
+                    "type": "ManagedServiceIdentity"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "deploy-mfa-notification-sentinel-content",
+      "resourceGroup": "[parameters('Workspace Resource Group')]",
+      "dependsOn": [
+        "[variables('logicAppResourceId')]"
+      ],
+      "properties": {
+        "mode": "Incremental",
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "parameters": {
+          "workspaceName": {
+            "value": "[parameters('Workspace Name')]"
+          },
+          "query": {
+            "value": "[variables('query')]"
+          },
+          "analyticsRuleId": {
+            "value": "[variables('analyticsRuleId')]"
+          },
+          "automationRuleId": {
+            "value": "[variables('automationRuleId')]"
+          },
+          "analyticsRuleResourceId": {
+            "value": "[variables('analyticsRuleResourceId')]"
+          },
+          "logicAppResourceId": {
+            "value": "[variables('logicAppResourceId')]"
+          },
+          "tenantId": {
+            "value": "[subscription().tenantId]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "workspaceName": {
+              "type": "string"
+            },
+            "query": {
+              "type": "string"
+            },
+            "analyticsRuleId": {
+              "type": "string"
+            },
+            "automationRuleId": {
+              "type": "string"
+            },
+            "analyticsRuleResourceId": {
+              "type": "string"
+            },
+            "logicAppResourceId": {
+              "type": "string"
+            },
+            "tenantId": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+              "apiVersion": "2022-10-01-preview",
+              "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/', parameters('analyticsRuleId'))]",
+              "kind": "NRT",
+              "properties": {
+                "displayName": "MFA method registered - notify user",
+                "description": "Creates one alert for each successful MFA method registration, including passkeys, and exposes the notification fields as custom details.",
+                "severity": "Informational",
+                "enabled": true,
+                "query": "[parameters('query')]",
+                "suppressionDuration": "PT5H",
+                "suppressionEnabled": false,
+                "tactics": [],
+                "techniques": [],
+                "eventGroupingSettings": {
+                  "aggregationKind": "AlertPerResult"
+                },
+                "incidentConfiguration": {
+                  "createIncident": false,
+                  "groupingConfiguration": {
+                    "enabled": false,
+                    "reopenClosedIncident": false,
+                    "lookbackDuration": "PT5H",
+                    "matchingMethod": "AllEntities",
+                    "groupByEntities": [],
+                    "groupByAlertDetails": [],
+                    "groupByCustomDetails": []
+                  }
+                },
+                "entityMappings": [
+                  {
+                    "entityType": "Account",
+                    "fieldMappings": [
+                      {
+                        "identifier": "Name",
+                        "columnName": "AccountName"
+                      },
+                      {
+                        "identifier": "UPNSuffix",
+                        "columnName": "AccountUPNSuffix"
+                      }
+                    ]
+                  }
+                ],
+                "customDetails": {
+                  "RecipientEmail": "RecipientEmail",
+                  "AuthenticationMethod": "AuthenticationMethod",
+                  "RegistrationTime": "RegistrationTime",
+                  "SourceIPAddress": "SourceIPAddress",
+                  "OperationName": "OperationName",
+                  "CorrelationId": "CorrelationId"
+                },
+                "alertDetailsOverride": {
+                  "alertDisplayNameFormat": "MFA method registered for {{RecipientEmail}}",
+                  "alertDescriptionFormat": "{{AuthenticationMethod}} was registered for {{RecipientEmail}} at {{RegistrationTime}}."
+                }
+              }
+            },
+            {
+              "type": "Microsoft.OperationalInsights/workspaces/providers/automationRules",
+              "apiVersion": "2025-09-01",
+              "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/', parameters('automationRuleId'))]",
+              "dependsOn": [
+                "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspaceName'), 'Microsoft.SecurityInsights', parameters('analyticsRuleId'))]"
+              ],
+              "properties": {
+                "displayName": "Run MFA method notification playbook",
+                "order": 1,
+                "triggeringLogic": {
+                  "isEnabled": true,
+                  "triggersOn": "Alerts",
+                  "triggersWhen": "Created",
+                  "conditions": [
+                    {
+                      "conditionType": "Property",
+                      "conditionProperties": {
+                        "propertyName": "AlertAnalyticRuleIds",
+                        "operator": "Contains",
+                        "propertyValues": [
+                          "[parameters('analyticsRuleResourceId')]"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "actions": [
+                  {
+                    "order": 1,
+                    "actionType": "RunPlaybook",
+                    "actionConfiguration": {
+                      "tenantId": "[parameters('tenantId')]",
+                      "logicAppResourceId": "[parameters('logicAppResourceId')]"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "Logic App Resource ID": {
+      "type": "string",
+      "value": "[variables('logicAppResourceId')]"
+    },
+    "Managed Identity Object ID": {
+      "type": "string",
+      "value": "[reference(variables('logicAppResourceId'), '2019-05-01', 'Full').identity.principalId]"
+    },
+    "Analytics Rule Resource ID": {
+      "type": "string",
+      "value": "[variables('analyticsRuleResourceId')]"
+    }
+  }
+}

@@ -1,0 +1,454 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "Workspace Name": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the existing Log Analytics workspace with Microsoft Sentinel enabled"
+      }
+    },
+    "Workspace Resource Group": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource group containing the existing Microsoft Sentinel workspace"
+      }
+    },
+    "Logic App Name": {
+      "type": "string",
+      "defaultValue": "device-registration-notification",
+      "metadata": {
+        "description": "Name of the Logic App playbook"
+      }
+    },
+    "Sender Mailbox": {
+      "type": "string",
+      "metadata": {
+        "description": "Exchange Online mailbox used as the Microsoft Graph sendMail sender"
+      }
+    },
+    "Email Subject Prefix": {
+      "type": "string",
+      "defaultValue": "[Security notification] Device registered:",
+      "metadata": {
+        "description": "Prefix placed before the device name in the email subject"
+      }
+    },
+    "Helpdesk Contact": {
+      "type": "string",
+      "defaultValue": "the helpdesk",
+      "metadata": {
+        "description": "Helpdesk contact text included in the notification body"
+      }
+    }
+  },
+  "variables": {
+    "sentinelConnectionName": "[concat('azuresentinel-', parameters('Logic App Name'))]",
+    "analyticsRuleId": "4b8baec6-464c-46e1-af3f-d1ee0452d81e",
+    "automationRuleId": "d4f6aecb-dc1a-41aa-90a7-282d0f40b1b0",
+    "analyticsRuleResourceId": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', parameters('Workspace Resource Group'), '/providers/Microsoft.OperationalInsights/workspaces/', parameters('Workspace Name'), '/providers/Microsoft.SecurityInsights/alertRules/', variables('analyticsRuleId'))]",
+    "logicAppResourceId": "[resourceId('Microsoft.Logic/workflows', parameters('Logic App Name'))]",
+    "query": "AuditLogs\n| where Result =~ \"success\"\n| where OperationName in (\"Register device\", \"Add device\")\n| extend Actor = todynamic(InitiatedBy), Targets = todynamic(TargetResources)\n| extend RecipientEmail = tostring(Actor.user.userPrincipalName), SourceIPAddress = tostring(Actor.user.ipAddress)\n| where isnotempty(RecipientEmail) and RecipientEmail !contains \"#EXT#\"\n| extend DeviceObjectId = tostring(Targets[0].id), TargetDeviceName = tostring(Targets[0].displayName), ModifiedProperties = todynamic(Targets[0].modifiedProperties)\n| mv-apply Property = ModifiedProperties on (\n    summarize\n        DeviceIdRaw = take_anyif(tostring(Property.newValue), tostring(Property.displayName) == \"DeviceId\"),\n        DeviceDisplayNameRaw = take_anyif(tostring(Property.newValue), tostring(Property.displayName) == \"DeviceDisplayName\"),\n        DisplayNameRaw = take_anyif(tostring(Property.newValue), tostring(Property.displayName) == \"DisplayName\"),\n        CloudDisplayNameRaw = take_anyif(tostring(Property.newValue), tostring(Property.displayName) == \"CloudDisplayName\"),\n        DeviceOSRaw = take_anyif(tostring(Property.newValue), tostring(Property.displayName) == \"DeviceOS\"),\n        DeviceOSTypeRaw = take_anyif(tostring(Property.newValue), tostring(Property.displayName) == \"DeviceOSType\"),\n        CloudDeviceOSTypeRaw = take_anyif(tostring(Property.newValue), tostring(Property.displayName) == \"CloudDeviceOSType\"),\n        DeviceOSVersionRaw = take_anyif(tostring(Property.newValue), tostring(Property.displayName) == \"DeviceOSVersion\"),\n        CloudDeviceOSVersionRaw = take_anyif(tostring(Property.newValue), tostring(Property.displayName) == \"CloudDeviceOSVersion\"),\n        DeviceTrustTypeRaw = take_anyif(tostring(Property.newValue), tostring(Property.displayName) == \"DeviceTrustType\")\n)\n| extend\n    DeviceId = tostring(todynamic(DeviceIdRaw)[0]),\n    RegisteredDeviceName = tostring(todynamic(DeviceDisplayNameRaw)[0]),\n    ModifiedDeviceName = tostring(todynamic(DisplayNameRaw)[0]),\n    CloudDeviceName = tostring(todynamic(CloudDisplayNameRaw)[0]),\n    RegisteredDeviceOS = tostring(todynamic(DeviceOSRaw)[0]),\n    DeviceOS = tostring(todynamic(DeviceOSTypeRaw)[0]),\n    CloudDeviceOS = tostring(todynamic(CloudDeviceOSTypeRaw)[0]),\n    DeviceOSVersion = tostring(todynamic(DeviceOSVersionRaw)[0]),\n    CloudDeviceOSVersion = tostring(todynamic(CloudDeviceOSVersionRaw)[0]),\n    DeviceTrustType = tostring(todynamic(DeviceTrustTypeRaw)[0])\n| extend DeviceName = coalesce(TargetDeviceName, RegisteredDeviceName, ModifiedDeviceName, CloudDeviceName, \"Not recorded\"), OperatingSystem = coalesce(RegisteredDeviceOS, DeviceOS, CloudDeviceOS, \"Not recorded\"), OSVersion = coalesce(DeviceOSVersion, CloudDeviceOSVersion, \"Not recorded\")\n| extend JoinType = case(DeviceTrustType =~ \"Workplace\", \"Microsoft Entra registered\", DeviceTrustType =~ \"AzureAd\", \"Microsoft Entra joined\", DeviceTrustType =~ \"ServerAd\", \"Microsoft Entra hybrid joined\", isnotempty(DeviceTrustType), DeviceTrustType, \"Not recorded\")\n| extend AccountName = tostring(split(RecipientEmail, \"@\")[0]), AccountUPNSuffix = tostring(split(RecipientEmail, \"@\")[1])\n| extend RegistrationTime = strcat(format_datetime(TimeGenerated, \"yyyy-MM-dd HH:mm:ss\"), \" UTC\")\n| project TimeGenerated, RecipientEmail, AccountName, AccountUPNSuffix, DeviceName, DeviceId, DeviceObjectId, OperatingSystem, OSVersion, JoinType, RegistrationTime, SourceIPAddress, OperationName, CorrelationId"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Web/connections",
+      "apiVersion": "2016-06-01",
+      "name": "[variables('sentinelConnectionName')]",
+      "location": "[resourceGroup().location]",
+      "kind": "V1",
+      "properties": {
+        "displayName": "[variables('sentinelConnectionName')]",
+        "customParameterValues": {},
+        "api": {
+          "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+        },
+        "connectionState": "Enabled",
+        "parameterValueSet": null,
+        "parameterValueType": "Alternative"
+      }
+    },
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('Logic App Name')]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/connections', variables('sentinelConnectionName'))]"
+      ],
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "state": "Enabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "SenderMailbox": {
+              "type": "String"
+            },
+            "EmailSubjectPrefix": {
+              "type": "String"
+            },
+            "HelpdeskContact": {
+              "type": "String"
+            },
+            "$connections": {
+              "type": "Object"
+            }
+          },
+          "triggers": {
+            "Microsoft_Sentinel_alert": {
+              "type": "ApiConnectionWebhook",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                  }
+                },
+                "body": {
+                  "callback_url": "@listCallbackUrl()"
+                },
+                "path": "/subscribe"
+              }
+            }
+          },
+          "actions": {
+            "Parse_Custom_Details": {
+              "type": "ParseJson",
+              "runAfter": {},
+              "inputs": {
+                "content": "@triggerBody()?['ExtendedProperties']?['Custom Details']",
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "RecipientEmail": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "DeviceName": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "DeviceId": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "DeviceObjectId": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "OperatingSystem": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "OSVersion": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "JoinType": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "RegistrationTime": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "SourceIPAddress": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "OperationName": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "CorrelationId": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "RecipientEmail",
+                    "DeviceName",
+                    "RegistrationTime",
+                    "OperationName",
+                    "CorrelationId"
+                  ]
+                }
+              }
+            },
+            "Send_notification_with_Microsoft_Graph": {
+              "type": "Http",
+              "runAfter": {
+                "Parse_Custom_Details": [
+                  "Succeeded"
+                ]
+              },
+              "inputs": {
+                "uri": "@{concat('https://graph.microsoft.com/v1.0/users/', encodeUriComponent(parameters('SenderMailbox')), '/sendMail')}",
+                "method": "POST",
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "body": {
+                  "message": {
+                    "subject": "@{concat(parameters('EmailSubjectPrefix'), ' ', string(first(body('Parse_Custom_Details')?['DeviceName'])))}",
+                    "body": {
+                      "contentType": "Text",
+                      "content": "@{concat('The following device was registered with your account.', decodeUriComponent('%0A%0A'), 'Device name: ', string(first(body('Parse_Custom_Details')?['DeviceName'])), decodeUriComponent('%0A'), 'Device ID: ', if(empty(body('Parse_Custom_Details')?['DeviceId']), 'Not recorded', string(first(body('Parse_Custom_Details')?['DeviceId']))), decodeUriComponent('%0A'), 'Join type: ', if(empty(body('Parse_Custom_Details')?['JoinType']), 'Not recorded', string(first(body('Parse_Custom_Details')?['JoinType']))), decodeUriComponent('%0A'), 'Operating system: ', if(empty(body('Parse_Custom_Details')?['OperatingSystem']), 'Not recorded', string(first(body('Parse_Custom_Details')?['OperatingSystem']))), decodeUriComponent('%0A'), 'OS version: ', if(empty(body('Parse_Custom_Details')?['OSVersion']), 'Not recorded', string(first(body('Parse_Custom_Details')?['OSVersion']))), decodeUriComponent('%0A'), 'Time: ', string(first(body('Parse_Custom_Details')?['RegistrationTime'])), decodeUriComponent('%0A'), 'Source IP address: ', if(empty(body('Parse_Custom_Details')?['SourceIPAddress']), 'Not recorded', string(first(body('Parse_Custom_Details')?['SourceIPAddress']))), decodeUriComponent('%0A'), 'Operation: ', string(first(body('Parse_Custom_Details')?['OperationName'])), decodeUriComponent('%0A'), 'Correlation ID: ', string(first(body('Parse_Custom_Details')?['CorrelationId'])), decodeUriComponent('%0A%0A'), 'If you registered this device, no action is required. If you did not, contact ', parameters('HelpdeskContact'), ' immediately.')}"
+                    },
+                    "toRecipients": [
+                      {
+                        "emailAddress": {
+                          "address": "@{string(first(body('Parse_Custom_Details')?['RecipientEmail']))}"
+                        }
+                      }
+                    ]
+                  },
+                  "saveToSentItems": true
+                },
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "audience": "https://graph.microsoft.com"
+                }
+              }
+            }
+          },
+          "outputs": {}
+        },
+        "parameters": {
+          "SenderMailbox": {
+            "value": "[parameters('Sender Mailbox')]"
+          },
+          "EmailSubjectPrefix": {
+            "value": "[parameters('Email Subject Prefix')]"
+          },
+          "HelpdeskContact": {
+            "value": "[parameters('Helpdesk Contact')]"
+          },
+          "$connections": {
+            "value": {
+              "azuresentinel": {
+                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', variables('sentinelConnectionName'))]",
+                "connectionName": "[variables('sentinelConnectionName')]",
+                "connectionProperties": {
+                  "authentication": {
+                    "type": "ManagedServiceIdentity"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "deploy-device-registration-notification-sentinel-content",
+      "resourceGroup": "[parameters('Workspace Resource Group')]",
+      "dependsOn": [
+        "[variables('logicAppResourceId')]"
+      ],
+      "properties": {
+        "mode": "Incremental",
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "parameters": {
+          "workspaceName": {
+            "value": "[parameters('Workspace Name')]"
+          },
+          "query": {
+            "value": "[variables('query')]"
+          },
+          "analyticsRuleId": {
+            "value": "[variables('analyticsRuleId')]"
+          },
+          "automationRuleId": {
+            "value": "[variables('automationRuleId')]"
+          },
+          "analyticsRuleResourceId": {
+            "value": "[variables('analyticsRuleResourceId')]"
+          },
+          "logicAppResourceId": {
+            "value": "[variables('logicAppResourceId')]"
+          },
+          "tenantId": {
+            "value": "[subscription().tenantId]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "workspaceName": {
+              "type": "string"
+            },
+            "query": {
+              "type": "string"
+            },
+            "analyticsRuleId": {
+              "type": "string"
+            },
+            "automationRuleId": {
+              "type": "string"
+            },
+            "analyticsRuleResourceId": {
+              "type": "string"
+            },
+            "logicAppResourceId": {
+              "type": "string"
+            },
+            "tenantId": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+              "apiVersion": "2022-10-01-preview",
+              "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/', parameters('analyticsRuleId'))]",
+              "kind": "NRT",
+              "properties": {
+                "displayName": "Device registered - notify user",
+                "description": "Creates one alert for each successful user-driven device registration and exposes the notification fields as custom details.",
+                "severity": "Informational",
+                "enabled": true,
+                "query": "[parameters('query')]",
+                "suppressionDuration": "PT5H",
+                "suppressionEnabled": false,
+                "tactics": [],
+                "techniques": [],
+                "eventGroupingSettings": {
+                  "aggregationKind": "AlertPerResult"
+                },
+                "incidentConfiguration": {
+                  "createIncident": false,
+                  "groupingConfiguration": {
+                    "enabled": false,
+                    "reopenClosedIncident": false,
+                    "lookbackDuration": "PT5H",
+                    "matchingMethod": "AllEntities",
+                    "groupByEntities": [],
+                    "groupByAlertDetails": [],
+                    "groupByCustomDetails": []
+                  }
+                },
+                "entityMappings": [
+                  {
+                    "entityType": "Account",
+                    "fieldMappings": [
+                      {
+                        "identifier": "Name",
+                        "columnName": "AccountName"
+                      },
+                      {
+                        "identifier": "UPNSuffix",
+                        "columnName": "AccountUPNSuffix"
+                      }
+                    ]
+                  }
+                ],
+                "customDetails": {
+                  "RecipientEmail": "RecipientEmail",
+                  "DeviceName": "DeviceName",
+                  "DeviceId": "DeviceId",
+                  "DeviceObjectId": "DeviceObjectId",
+                  "OperatingSystem": "OperatingSystem",
+                  "OSVersion": "OSVersion",
+                  "JoinType": "JoinType",
+                  "RegistrationTime": "RegistrationTime",
+                  "SourceIPAddress": "SourceIPAddress",
+                  "OperationName": "OperationName",
+                  "CorrelationId": "CorrelationId"
+                },
+                "alertDetailsOverride": {
+                  "alertDisplayNameFormat": "Device registered for {{RecipientEmail}}",
+                  "alertDescriptionFormat": "{{DeviceName}} was registered for {{RecipientEmail}} at {{RegistrationTime}}."
+                }
+              }
+            },
+            {
+              "type": "Microsoft.OperationalInsights/workspaces/providers/automationRules",
+              "apiVersion": "2025-09-01",
+              "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/', parameters('automationRuleId'))]",
+              "dependsOn": [
+                "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspaceName'), 'Microsoft.SecurityInsights', parameters('analyticsRuleId'))]"
+              ],
+              "properties": {
+                "displayName": "Run device registration notification playbook",
+                "order": 1,
+                "triggeringLogic": {
+                  "isEnabled": true,
+                  "triggersOn": "Alerts",
+                  "triggersWhen": "Created",
+                  "conditions": [
+                    {
+                      "conditionType": "Property",
+                      "conditionProperties": {
+                        "propertyName": "AlertAnalyticRuleIds",
+                        "operator": "Contains",
+                        "propertyValues": [
+                          "[parameters('analyticsRuleResourceId')]"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "actions": [
+                  {
+                    "order": 1,
+                    "actionType": "RunPlaybook",
+                    "actionConfiguration": {
+                      "tenantId": "[parameters('tenantId')]",
+                      "logicAppResourceId": "[parameters('logicAppResourceId')]"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "Logic App Resource ID": {
+      "type": "string",
+      "value": "[variables('logicAppResourceId')]"
+    },
+    "Managed Identity Object ID": {
+      "type": "string",
+      "value": "[reference(variables('logicAppResourceId'), '2019-05-01', 'Full').identity.principalId]"
+    },
+    "Analytics Rule Resource ID": {
+      "type": "string",
+      "value": "[variables('analyticsRuleResourceId')]"
+    }
+  }
+}

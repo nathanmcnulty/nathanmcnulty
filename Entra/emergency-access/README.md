@@ -1,91 +1,126 @@
 # Emergency Access Accounts
 
-## Excluding Emergency Access Accounts from Conditional Access
+These solutions ensure a designated Microsoft Entra security group remains excluded from Conditional Access policies. Place the emergency access accounts in that group and deploy one remediation method.
 
-### Logic App - Scheduled
-<details>
-  <summary>Expand for details</summary><br>
+## Recommended approach
 
-<span style="display:block">[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fnathanmcnulty%2Fnathanmcnulty%2Frefs%2Fheads%2Fmain%2FEntra%2Femergency-access%2Femergency-access-exclusion.json)</span>
+Use the Microsoft Sentinel solution when Entra audit logs are already ingested into Sentinel. It reacts to successful Conditional Access policy creation or modification and checks only the affected policy. The template deploys the complete path: NRT analytics rule, alert-triggered Logic App, and alert-created automation rule.
 
-This solution exlcudes a security group from all CA policies, so you will need to create a security group and place your emergency access accounts in this group. Conditional Access caches group memberships, so there is no risk that an outage between Conditional Access and Entra ID will cause issues. You will need the security group objectId during deployment of the Logic App template below.
+Use the scheduled Logic App or PowerShell solution when Sentinel is not available. Those approaches enumerate all Conditional Access policies, which is less event-specific but provides a useful periodic safety check.
 
-<img width="728" height="709" alt="image" src="https://github.com/user-attachments/assets/25608f7f-00dc-4e0c-8f3c-a16af389f92f" />
-</details>
+## Microsoft Sentinel and Logic App
 
-### Logic App - Sentinel
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fnathanmcnulty%2Fnathanmcnulty%2Frefs%2Fheads%2Fmain%2FEntra%2Femergency-access%2Femergency-access-exclusion-sentinel.json)
 
-<details>
-  <summary>Expand for details</summary><br>
+Deploy [emergency-access-exclusion-sentinel.json](emergency-access-exclusion-sentinel.json) to the resource group where the Logic App should reside. Provide:
 
-<span style="display:block">[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fnathanmcnulty%2Fnathanmcnulty%2Frefs%2Fheads%2Fmain%2FEntra%2Femergency-access%2Femergency-access-exclusion-sentinel.json)</span>
+- Emergency access group object ID
+- Existing Sentinel workspace name
+- Resource group containing the Sentinel workspace
+- Optional Logic App name
 
-This solution uses a Sentinel NRT Analytics rule to create an alert that triggers a Logic App. The Logic App only runs when an alert is created (so only when a Conditional Access change is detected), and this reduces cost by not running as often as well as limiting the number of actions because it only needs to process the one Conditional Access policy that was created or changed rather than processing all policies.<br><br>
+The template contains no tenant-specific identifiers. It creates this flow:
 
-The query below excludes the Managed Identity (to avoid loops) based on the default name of the Logic app, so if you change the name of the Logic App, you will need to change the query below to reflect the name of the Logic App. Sentinel will also need to be granted permissions on the resource group containing the Logic app.<br><br>
+```text
+Conditional Access policy audit event
+    -> Log Analytics AuditLogs
+    -> Sentinel NRT analytics rule
+    -> alert-created Sentinel automation rule
+    -> Logic App
+    -> Microsoft Graph policy GET/PATCH
+```
+
+The deployed query is equivalent to the following, with the Logic App name inserted from the template parameter to prevent remediation events from retriggering the workflow:
 
 ```kql
 AuditLogs
-| where OperationName in ("Add conditional access policy","Update conditional access policy")
-| extend CAPolicyId = parse_json(TargetResources)[0]["id"]
+| where Result =~ "success"
+| where OperationName in ("Add conditional access policy", "Update conditional access policy")
 | where Identity != "emergency-access-exclusion-sentinel"
-//| where parse_json(InitiatedBy)["app"]["appId"] == '' // Uncomment to exclude all modifications made by apps
+| extend CAPolicyId = tostring(todynamic(TargetResources)[0].id), ActorIdentity = Identity
+| where isnotempty(CAPolicyId)
+| project TimeGenerated, CAPolicyId, OperationName, ActorIdentity, CorrelationId
 ```
 
-https://github.com/user-attachments/assets/f48539ed-7c84-4bb0-9cfb-3492c886a2ab
+The analytics rule creates one alert per changed policy and does not create an incident. The automation rule invokes the playbook when that specific analytics rule creates an alert. This replaces the older direct analytics-rule playbook invocation path retired in March 2026.
 
-</details>
+### Post-deployment permissions
 
+Two permissions are required after deployment:
 
+1. Grant Microsoft Sentinel's service account **Microsoft Sentinel Automation Contributor** on the resource group containing the playbook.
+2. Grant the Logic App managed identity Microsoft Graph application permissions `Policy.Read.All` and `Policy.ReadWrite.ConditionalAccess`.
 
-### Logic App - Azure Monitor
-
-<details>
-  <summary>Expand for details</summary><br>
-This solution is nearly identical to the Sentinel method above except that Azure Monitor (Log Analytics) can only run the query on an interval (1, 5, 10, or 15 minutes), and the cost to enable alerts may actually be more expensive than running Logic Apps on a schedule. The value here is if you inted to (or already do) create lots of alerts based on your Azure Monitor data.<br><br>
-  
-The query already excludes the Identity that is based on the default name of the Logic App. If you change the name of the Logic App, you will need to change the query below to reflect the name of the Logic App.<br><br>
-
-```kql
-AuditLogs
-| where OperationName in ("Add conditional access policy","Update conditional access policy")
-| extend CAPolicyId = parse_json(TargetResources)[0]["id"]
-| where Identity != "emergency-access-exclusion"
-//| where parse_json(InitiatedBy)["app"]["appId"] == '' // Uncomment to exclude all modifications made by apps
-```
-</details>
-
-### Automation account
-
-<details>
-  <summary>Expand for details</summary><br>
-This solution uses a PowerShell runbook in an Azure Automation account, and it can be configured to run on a schedule or triggered via a webhook. I plan to create an Azure Developer CLI (azd) deployment for this and a few other solutions as a showcase of how that tool works, but for now you can simply copy the code from the script here:
-https://github.com/nathanmcnulty/nathanmcnulty/blob/main/Entra/emergency-access/emergency-access-exclusion.ps1
-</details>
-
-### Granting Permissions to the Managed Identity
-
-To ensure emergency access accounts are never blocked by Conditional Access policies, we will use some form of automation to check and remediate all Conditional Access policise. For this, we will always want to use a Managed Identity, and that Managed Identity will need permissions in Entra to make the necessary changes in Conditional Access. Regardless of automation tool you choose, you will need to copy the Managed Identity from Settings - Identity, and use the following script to grant the Managed Identity permissions to modify Conditional Access policies:
+Example Graph permission assignment:
 
 ```powershell
-$MI = "752c2130-dd18-4804-b2a5-c04edb155335"
+$ManagedIdentityObjectId = "<managed identity object ID from deployment output>"
 
-# Connect to Graph with scope to grant API permissions to Managed Identity
-Connect-MgGraph -Scopes "AppRoleAssignment.ReadWrite.All"
+Connect-MgGraph -Scopes "AppRoleAssignment.ReadWrite.All", "Application.Read.All"
 
-# Get SP for Graph API
-$GraphSP = (Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/servicePrincipals?`$filter=appId eq '00000003-0000-0000-c000-000000000000'").value
+$GraphServicePrincipal = Get-MgServicePrincipal `
+    -Filter "appId eq '00000003-0000-0000-c000-000000000000'" `
+    -Property Id,AppRoles
 
-# Get each permission App Role ID and assign the App Role to the Managed Identity
-"Policy.Read.All","Policy.ReadWrite.ConditionalAccess" | ForEach-Object {
-   $permission = $_
-   $AppRole = $GraphSP.AppRoles | Where-Object {$_.Value -eq $permission -and $_.AllowedMemberTypes -contains "Application"}
-   $body = @{
-    "principalId" = $MI
-    "resourceId" = $GraphSP.Id
-    "appRoleId" = $AppRole.Id
-   }
-   Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/servicePrincipals/$MI/appRoleAssignments" -Body ($body | ConvertTo-Json) -ContentType "application/json"
+$ExistingAssignments = Get-MgServicePrincipalAppRoleAssignment `
+    -ServicePrincipalId $ManagedIdentityObjectId `
+    -All
+
+foreach ($PermissionName in "Policy.Read.All", "Policy.ReadWrite.ConditionalAccess") {
+    $AppRole = $GraphServicePrincipal.AppRoles |
+        Where-Object {
+            $_.Value -eq $PermissionName -and
+            $_.AllowedMemberTypes -contains "Application"
+        }
+
+    if ($AppRole.Id -notin $ExistingAssignments.AppRoleId) {
+        New-MgServicePrincipalAppRoleAssignment `
+            -ServicePrincipalId $ManagedIdentityObjectId `
+            -PrincipalId $ManagedIdentityObjectId `
+            -ResourceId $GraphServicePrincipal.Id `
+            -AppRoleId $AppRole.Id
+    }
 }
 ```
 
+## Scheduled Logic App
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fnathanmcnulty%2Fnathanmcnulty%2Frefs%2Fheads%2Fmain%2FEntra%2Femergency-access%2Femergency-access-exclusion.json)
+
+The scheduled [emergency-access-exclusion.json](emergency-access-exclusion.json) workflow checks every Conditional Access policy and adds the configured group wherever it is absent. Grant its managed identity the same Graph permissions described above.
+
+## Azure Automation or PowerShell Function
+
+[emergency-access-exclusion.ps1](emergency-access-exclusion.ps1) provides the same full-policy evaluation for an Azure Automation runbook or PowerShell Function. It can run on a schedule or be invoked by a webhook. Webhook content is not trusted or used to select a policy; every invocation re-reads the authoritative policy collection from Microsoft Graph.
+
+Configuration:
+
+- Runbook parameter `EmergencyAccountsGroupObjectId`, or Function application setting `EMERGENCY_ACCESS_GROUP_OBJECT_ID`
+- System-assigned or user-assigned managed identity
+- `Microsoft.Graph.Authentication` PowerShell module
+- Graph application permissions `Policy.Read.All` and `Policy.ReadWrite.ConditionalAccess`
+
+The script validates the group ID, preserves existing exclusions, updates only noncompliant policies, and reports evaluated, changed, unchanged, and failed counts. An HTTP-triggered PowerShell Function can use the script as `run.ps1` with bindings named `Request` and `Response`.
+
+Treat Automation webhook URLs and Function keys as secrets. Azure Automation authorizes webhook calls by possession of the URL and retains runbook input in job logs.
+
+## Azure Monitor alternative
+
+An Azure Monitor scheduled query alert can use the same KQL as the Sentinel rule, but Log Analytics alert evaluation is interval-based and does not provide Sentinel's alert automation model. Use this only when Azure Monitor alerts are already the preferred automation entry point.
+
+## Verification
+
+1. Create or update a test Conditional Access policy without the emergency access group exclusion.
+2. Confirm the selected automation method adds the group to `conditions.users.excludeGroups` without changing other policy conditions.
+3. For Sentinel, confirm one NRT alert and a successful automation-rule action and Logic App run.
+4. Update the policy again after the exclusion exists and confirm no PATCH is required.
+5. Review failures and Sentinel analytics-rule health regularly.
+
+## References
+
+- [Manage emergency access accounts in Microsoft Entra ID](https://learn.microsoft.com/entra/identity/role-based-access-control/security-emergency-access)
+- [Work with near-real-time analytics rules in Microsoft Sentinel](https://learn.microsoft.com/azure/sentinel/create-nrt-rules)
+- [Create and use Microsoft Sentinel automation rules](https://learn.microsoft.com/azure/sentinel/create-manage-use-automation-rules)
+- [Migrate alert-triggered playbooks to automation rules](https://learn.microsoft.com/azure/sentinel/automation/migrate-playbooks-to-automation-rules)
+- [Start an Azure Automation runbook from a webhook](https://learn.microsoft.com/azure/automation/automation-webhooks)
+- [PowerShell developer reference for Azure Functions](https://learn.microsoft.com/azure/azure-functions/functions-reference-powershell)
