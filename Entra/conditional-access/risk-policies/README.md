@@ -34,3 +34,30 @@ These are available as JSON files for download in this folder and can be directl
 <img width="2627" height="1286" alt="image" src="https://github.com/user-attachments/assets/17422641-e012-4031-846d-1365dfbe7c14" />
 
 <img width="580" height="943" alt="image" src="https://github.com/user-attachments/assets/5880d385-a80c-499e-8a80-2d11e44d7194" />
+
+## Import with Microsoft Graph PowerShell
+
+```powershell
+$zipUrl = 'https://raw.githubusercontent.com/nathanmcnulty/nathanmcnulty/main/Entra/conditional-access/risk-policies/risk-policies.zip'
+$workDir = Join-Path ([IO.Path]::GetTempPath()) ('risk-policies-' + [guid]::NewGuid().ToString('N'))
+$zipPath = Join-Path $workDir 'risk-policies.zip'
+$extractPath = Join-Path $workDir 'policies'
+New-Item -ItemType Directory -Path $workDir | Out-Null
+
+try {
+    Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -ErrorAction Stop
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $extractPath -Force
+
+    Connect-MgGraph -Scopes @('Policy.Read.All', 'Policy.ReadWrite.ConditionalAccess')
+
+    $uri = 'https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies'
+    Get-ChildItem -LiteralPath $extractPath -File -Filter '*.json' | ForEach-Object {
+        Invoke-MgGraphRequest -Method POST -Uri $uri `
+            -Body (Get-Content -Raw -LiteralPath $_.FullName) `
+            -ContentType 'application/json'
+    }
+}
+finally {
+    Remove-Item -LiteralPath $workDir -Recurse -Force
+}
+```
