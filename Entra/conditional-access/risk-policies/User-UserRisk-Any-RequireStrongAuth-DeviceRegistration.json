@@ -1,0 +1,38 @@
+{
+  "displayName": "User-UserRisk-Any-RequireStrongAuth-DeviceRegistration",
+  "state": "enabledForReportingButNotEnforced",
+  "conditions": {
+    "users": {
+      "includeUsers": [
+        "All"
+      ],
+      "excludeUsers": [],
+      "includeGroups": [],
+      "excludeGroups": [],
+      "includeRoles": [],
+      "excludeRoles": []
+    },
+    "clientAppTypes": [
+      "all"
+    ],
+    "userRiskLevels": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "applications": {
+      "includeApplications": [],
+      "excludeApplications": [],
+      "includeUserActions": [
+        "urn:user:registerdevice"
+      ]
+    }
+  },
+  "grantControls": {
+    "operator": "OR",
+    "builtInControls": [],
+    "authenticationStrength": {
+      "id": "00000000-0000-0000-0000-000000000004"
+    }
+  }
+}

@@ -16,14 +16,18 @@ Prior to deploying, you should always review the reports for user and sign-in ri
 
 ## Deployment
 
-We typically recommend the following 5 policies as a starting point:
+We typically recommend the following 9 policies as a starting point:
 
-- [Medium or high Sign-in risk for regular user - Require MFA](https://github.com/nathanmcnulty/nathanmcnulty/blob/1428ffc2daafca6e4e8a9984e953117776985eb4/Entra/conditional-access/risk-policies/User-SignInRisk-MediumHigh-RequireMFA.json)
-- [High User risk regular users - Require password change](https://github.com/nathanmcnulty/nathanmcnulty/blob/1428ffc2daafca6e4e8a9984e953117776985eb4/Entra/conditional-access/risk-policies/User-UserRisk-High-PasswordReset.json)
+- [Medium or high Sign-in risk for regular user - Require MFA](https://github.com/nathanmcnulty/nathanmcnulty/blob/main/Entra/conditional-access/risk-policies/User-SignInRisk-MediumHigh-RequireMFA.json)
+- [High User risk regular users - Require risk remediation](https://github.com/nathanmcnulty/nathanmcnulty/blob/main/Entra/conditional-access/risk-policies/User-UserRisk-High-RiskRemediation.json)
   - Change to Block if not using Self-Service Password Reset
-- [Low or medium Sign-in risk for admins - Require MFA](https://github.com/nathanmcnulty/nathanmcnulty/blob/1428ffc2daafca6e4e8a9984e953117776985eb4/Entra/conditional-access/risk-policies/Admin-SignInRisk-LowMedium-RequireMFA.json)
-- [High Sign-in risk for admins - Block](https://github.com/nathanmcnulty/nathanmcnulty/blob/1428ffc2daafca6e4e8a9984e953117776985eb4/Entra/conditional-access/risk-policies/Admin-SignInRisk-High-Block.json)
-- [Medium or high user risk for admins - Block](https://github.com/nathanmcnulty/nathanmcnulty/blob/1428ffc2daafca6e4e8a9984e953117776985eb4/Entra/conditional-access/risk-policies/Admin-UserRisk-MediumHigh-Block.json)
+- [Low or medium Sign-in risk for admins - Require MFA](https://github.com/nathanmcnulty/nathanmcnulty/blob/main/Entra/conditional-access/risk-policies/Admin-SignInRisk-LowMedium-RequireMFA.json)
+- [High Sign-in risk for admins - Block](https://github.com/nathanmcnulty/nathanmcnulty/blob/main/Entra/conditional-access/risk-policies/Admin-SignInRisk-High-Block.json)
+- [Medium or high user risk for admins - Block](https://github.com/nathanmcnulty/nathanmcnulty/blob/main/Entra/conditional-access/risk-policies/Admin-UserRisk-MediumHigh-Block.json)
+- [Any User risk during security info registration - Block](https://github.com/nathanmcnulty/nathanmcnulty/blob/main/Entra/conditional-access/risk-policies/User-UserRisk-Any-Block-SecurityInfoRegistration.json)
+- [Any Sign-in risk during security info registration - Block](https://github.com/nathanmcnulty/nathanmcnulty/blob/main/Entra/conditional-access/risk-policies/User-SignInRisk-Any-Block-SecurityInfoRegistration.json)
+- [Any User risk during device registration - Require strong authentication](https://github.com/nathanmcnulty/nathanmcnulty/blob/main/Entra/conditional-access/risk-policies/User-UserRisk-Any-RequireStrongAuth-DeviceRegistration.json)
+- [Any Sign-in risk during device registration - Require strong authentication](https://github.com/nathanmcnulty/nathanmcnulty/blob/main/Entra/conditional-access/risk-policies/User-SignInRisk-Any-RequireStrongAuth-DeviceRegistration.json)
 
 These are available as JSON files for download in this folder and can be directly imported to Conditional Access in Entra portal:
 

@@ -1,0 +1,51 @@
+{
+  "displayName": "User-UserRisk-High-RiskRemediation",
+  "state": "enabledForReportingButNotEnforced",
+  "conditions": {
+    "users": {
+      "includeUsers": [
+        "All"
+      ],
+      "excludeUsers": [],
+      "includeGroups": [],
+      "excludeGroups": [],
+      "includeRoles": [],
+      "excludeRoles": [],
+      "excludeGuestsOrExternalUsers": {
+        "guestOrExternalUserTypes": "b2bCollaborationGuest,b2bCollaborationMember,b2bDirectConnectUser,internalGuest,otherExternalUser,serviceProvider",
+        "externalTenants": {
+          "membershipKind": "all"
+        }
+      }
+    },
+    "clientAppTypes": [
+      "all"
+    ],
+    "userRiskLevels": [
+      "high"
+    ],
+    "applications": {
+      "includeApplications": [
+        "All"
+      ],
+      "excludeApplications": [],
+      "includeUserActions": []
+    }
+  },
+  "grantControls": {
+    "operator": "AND",
+    "builtInControls": [
+      "mfa",
+      "riskRemediation"
+    ]
+  },
+  "sessionControls": {
+    "signInFrequency": {
+      "value": null,
+      "type": null,
+      "isEnabled": true,
+      "frequencyInterval": "everyTime",
+      "authenticationType": "primaryAndSecondaryAuthentication"
+    }
+  }
+}

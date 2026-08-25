@@ -1,0 +1,37 @@
+{
+  "displayName": "User-SignInRisk-Any-Block-SecurityInfoRegistration",
+  "state": "enabledForReportingButNotEnforced",
+  "conditions": {
+    "users": {
+      "includeUsers": [
+        "All"
+      ],
+      "excludeUsers": [],
+      "includeGroups": [],
+      "excludeGroups": [],
+      "includeRoles": [],
+      "excludeRoles": []
+    },
+    "clientAppTypes": [
+      "all"
+    ],
+    "signInRiskLevels": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "applications": {
+      "includeApplications": [],
+      "excludeApplications": [],
+      "includeUserActions": [
+        "urn:user:registersecurityinfo"
+      ]
+    }
+  },
+  "grantControls": {
+    "operator": "OR",
+    "builtInControls": [
+      "block"
+    ]
+  }
+}
