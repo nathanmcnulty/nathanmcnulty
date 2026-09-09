@@ -98,18 +98,19 @@ No specific configurations required beyond deploying the Defender for Endpoint a
 
 - The root uses a non-exportable 4096-bit `RSA-HSM` key in Azure Key Vault Premium.
 - The dedicated root has no EKU or path-length constraint. The GSA CA has `CA=true`, `pathLen=1`, `serverAuth`, `keyCertSign`, and `cRLSign`, allowing GSA's additional short-lived CA tier.
-- Active GSA certificates are preserved until GSA enables a replacement. `-RotateGsaCertificate` uploads and enables the new certificate through the same beta Graph transition used by the portal.
+- Setup and `-RotateGsaCertificate` stage certificates without enabling them. After verifying device trust, use `-EnableGsaCertificate` in a separate run. Activation checks the uploaded certificate against the selected root and requires existing matching Intune profiles.
 - GSA reads request `Prefer: include-unknown-enum-members` so `enabled` and `disabled` are not returned as `unknownFutureValue`.
-- CRLs are HSM-signed, monotonically numbered, uploaded using Microsoft Entra authorization, and verified before certificate issuance.
+- The CRL shares the newly issued intermediate's planned five-year expiry, shortened when the root expires sooner. This dedicated CA uses removal of root trust from devices as its emergency revocation procedure; it does not rely on short-lived CRLs.
+- CRLs are HSM-signed and fetched byte-for-byte before certificate issuance. New roots use separate CRL filenames; an existing legacy URL is reused only after verifying its CRL signature against the selected root. The signed CRL supplies the previous number, and ETag checks reject overlapping publication. The old unsigned number sidecar is no longer used.
 - Storage Shared Key and anonymous blob access are disabled.
 - `-Force` can replace only a conflicting pending CSR after confirmation; it never deletes the resource group or an active certificate.
 - `-WhatIf` returns before resource mutation.
 
 ## Prerequisites
 
-- PowerShell 7+, `Az.Accounts`, and `Microsoft.Graph.Authentication`. Azure resource operations use `Invoke-AzRestMethod`; no other Az modules are required.
+- PowerShell 7.4+, `Az.Accounts`, and `Microsoft.Graph.Authentication`. Azure resource operations use `Invoke-AzRestMethod`; no other Az modules are required.
 - Azure `Contributor` plus `User Access Administrator`, or `Owner`, when scoped RBAC assignments must be created.
-- Graph delegated scopes `NetworkAccess.ReadWrite.All` and `DeviceManagementConfiguration.ReadWrite.All` for full setup. `-RenewCrlOnly` requires no Graph session.
+- Graph delegated scopes `NetworkAccess.ReadWrite.All` and `DeviceManagementConfiguration.ReadWrite.All` for full setup. `-RenewCrlOnly` and `-CrlStatusOnly` require no Graph session.
 - Appropriate Global Secure Access and Intune licensing.
 
 ```powershell
@@ -126,7 +127,9 @@ Connect-MgGraph -Scopes 'NetworkAccess.ReadWrite.All','DeviceManagementConfigura
 .\Initialize-GSATLSInspection.ps1 -OrganizationName 'Contoso' -Verbose
 ```
 
-Intune profiles are unassigned unless `-AssignIntunePolicies` is supplied. Pilot-group assignment is recommended.
+Save the returned vault, storage, and root certificate names. Every rerun must supply both resource names; an unnamed run refuses to proceed when the resource group already contains a vault or storage account. Names are never inferred from global availability or ambiguous tags.
+
+Intune profiles are unassigned unless `-AssignIntunePolicies` is supplied. Pilot-group assignment is recommended. A different root gets separate profiles; existing root certificates and assignments are preserved.
 
 ## Migrate from an on-premises CA
 
@@ -134,15 +137,29 @@ Intune profiles are unassigned unless `-AssignIntunePolicies` is supplied. Pilot
 .\Initialize-GSATLSInspection.ps1 `
     -OrganizationName 'Contoso' `
     -KeyVaultName 'kv-gsa-contoso' `
+    -StorageAccountName 'sagsacrlcontoso' `
     -RootCertificateName 'gsa-tls-root-ca-v2' `
     -RotateGsaCertificate
 ```
 
-The active on-premises-backed certificate remains active until GSA enables the replacement. Deploy and verify the new root before running the rotation, then retire the old root only after validation.
+This stages the replacement and its trust profiles while preserving the active certificate, old profiles, and old CRL. Assign the new profiles to pilot devices and verify that the root is installed. Then enable the already uploaded certificate:
+
+```powershell
+.\Initialize-GSATLSInspection.ps1 `
+    -OrganizationName 'Contoso' `
+    -KeyVaultName 'kv-gsa-contoso' `
+    -StorageAccountName 'sagsacrlcontoso' `
+    -RootCertificateName 'gsa-tls-root-ca-v2' `
+    -EnableGsaCertificate
+```
+
+Supplying `-EnableGsaCertificate` confirms that you have verified device trust. Profile existence alone does not prove installation. The same stage/deploy/enable sequence applies to initial setup. Retire old trust only after validating the replacement. Existing installations with a short-lived CRL can use `-RenewCrlOnly` once to publish a longer-lived CRL without replacing the intermediate or changing its CDP.
 
 ## Renew the CRL
 
-`-RenewCrlOnly` is reuse-only: the resource group, Premium vault, RSA-HSM root, and storage account must exist. It does not use Graph, create a CSR, or modify Intune.
+`-RenewCrlOnly` requires explicit resource names and an existing signed CRL belonging to the selected root. It reads existing resources, signs and publishes the CRL, and verifies retrieval. It does not configure RBAC, storage, private endpoints, diagnostics, GSA, or Intune. The existing storage custom domain is reused when `-CrlHostname` is omitted.
+
+The renewal identity needs resource-read access, Key Vault certificate/key read and sign permissions, and blob read/write access. It does not need role-assignment or infrastructure-write permissions. A private vault still requires network access from the renewal host.
 
 ```powershell
 .\Initialize-GSATLSInspection.ps1 `
@@ -153,15 +170,21 @@ The active on-premises-backed certificate remains active until GSA enables the r
     -RenewCrlOnly
 ```
 
-Schedule it before the CRL's 30-day `nextUpdate`.
+There is no monthly renewal requirement. New issuance uses one planned expiry for the intermediate and CRL. Explicit renewal publishes a CRL for the same intended five-year lifetime starting at renewal, capped at root expiration. Renewal remains available in the root's last six months. It does not query Graph for an existing intermediate's exact expiry, so a renewed CRL can outlast that intermediate.
+
+Use the same command with `-CrlStatusOnly` instead of `-RenewCrlOnly` to inspect `ThisUpdate`, `NextUpdate`, and `DaysRemaining` without writes. Plan certificate replacement before its expiration; the CRL is not a separate monthly maintenance task.
+
+A long-lived CRL can remain cached until its next update, so publishing a revocation would not reliably invalidate the intermediate promptly. If this dedicated CA must be distrusted, remove its root from every trusting device and application store, verify removal, and stop using the associated GSA certificate. Removing trust in Intune alone is not proof that an offline device has received the change.
+
+Keep using the original root certificate name for renewal. A replacement root gets a new CRL URL; it cannot overwrite the old root's CRL.
 
 ## Private endpoint, CRL DNS, and Intune
 
-A Key Vault private endpoint applies to the signing or renewal host; GSA itself does not access Key Vault. Supply `-EnablePrivateEndpoint`, a subnet resource ID, and an existing `privatelink.vaultcore.azure.net` zone resource ID. The script creates the `vault` endpoint and DNS group, verifies private resolution and data-plane access, then disables public access. It restores public access if validation fails.
+A Key Vault private endpoint applies to the signing or renewal host; GSA itself does not access Key Vault. Supply `-EnablePrivateEndpoint`, a subnet resource ID, and an existing `privatelink.vaultcore.azure.net` zone resource ID. The script creates the `vault` endpoint and DNS group, verifies private resolution and data-plane access, then disables public access. If validation fails, it restores the original public-access and firewall-default settings; an already private vault stays private.
 
-With `-CrlHostname crl.contoso.com`, create the displayed CNAME to the exact static-website hostname. Certificate issuance stops unless DNS and HTTP retrieval work.
+With `-CrlHostname crl.contoso.com`, create the displayed CNAME to the exact static-website hostname. A missing or mismatched CNAME stops setup with instructions to configure DNS and rerun with the same resource names. Domain registration must succeed, and both the direct and custom endpoints must return the exact published CRL with the correct content type.
 
-Default trusted-root profiles cover Windows, macOS, iOS/iPadOS, Android Enterprise Device Owner, Android Enterprise Work Profile, and Android AOSP Device Owner. Android Device Administrator is excluded. Existing matching profiles are updated while assignments are preserved.
+Default trusted-root profiles cover Windows, macOS, iOS/iPadOS, Android Enterprise Device Owner, Android Enterprise Work Profile, and Android AOSP Device Owner. Android Device Administrator is excluded. Matching certificate profiles are reused. New roots receive profiles named with their thumbprint; old profiles are never overwritten.
 
 ## Important parameters
 
@@ -172,8 +195,10 @@ Default trusted-root profiles cover Windows, macOS, iOS/iPadOS, Android Enterpri
 | `RootCertificateName` | `gsa-tls-root-ca` | Use a new name for migration |
 | `StorageAccountName` | Derived | Existing or new CRL storage |
 | `CrlHostname` | None | Optional custom HTTP CDP |
-| `RotateGsaCertificate` | False | Upload and enable replacement; preserve active until transition |
-| `RenewCrlOnly` | False | Renew CRL from existing resources |
+| `RotateGsaCertificate` | False | Stage a replacement; preserve active certificate and old trust |
+| `EnableGsaCertificate` | False | Enable a previously staged certificate after verifying device trust |
+| `RenewCrlOnly` | False | Renew CRL using explicit existing resource names |
+| `CrlStatusOnly` | False | Verify and report CRL expiry without writes |
 | `EnablePrivateEndpoint` | False | Private-link hardening after validation |
 | `AssignIntunePolicies` | False | Assign profiles to All Devices |
 | `Force` | False | Confirm deletion of an unusable pending CSR |
@@ -181,9 +206,9 @@ Default trusted-root profiles cover Windows, macOS, iOS/iPadOS, Android Enterpri
 ## Verification and next steps
 
 ```powershell
-Invoke-Pester .\tests\Initialize-GSATLSInspection.Tests.ps1 -Output Detailed
+Invoke-Pester .\tests -Output Detailed
 ```
 
-After deployment, verify CRL retrieval, deploy the root to a pilot group, confirm the certificate is active, and test a narrowly scoped TLS inspection security profile.
+After staging, verify CRL retrieval and root installation on pilot devices, enable the staged certificate, and test a narrowly scoped TLS inspection security profile.
 
 References: [GSA TLS architecture](https://learn.microsoft.com/en-us/entra/global-secure-access/concept-transport-layer-security), [certificate tutorial](https://learn.microsoft.com/en-us/entra/global-secure-access/tutorial-internet-access-tls-inspection), [Graph update API](https://learn.microsoft.com/en-us/graph/api/networkaccess-externalcertificateauthoritycertificate-update?view=graph-rest-beta), [Key Vault private link](https://learn.microsoft.com/en-us/azure/key-vault/general/private-link-service), and [Intune trusted roots](https://learn.microsoft.com/en-us/intune/intune-service/protect/certificates-trusted-root).
