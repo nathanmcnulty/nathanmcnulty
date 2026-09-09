@@ -21,11 +21,11 @@ jobs:
     steps:
 
       # Checkout your code repository to scan
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       # Run analyzers
     - name: Run Microsoft Security DevOps
-      uses: microsoft/security-devops-action@latest
+      uses: microsoft/security-devops-action@d0736c546281e0632667b8e0046ae3d7bba0bf67
       id: msdo
     # with:
       # config: string. Optional. A file path to an MSDO configuration file ('*.gdnconfig').
