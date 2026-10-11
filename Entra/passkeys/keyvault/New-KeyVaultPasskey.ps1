@@ -3,7 +3,7 @@
 <# .SYNOPSIS
 Register a research Entra software passkey with Graph application authentication and none attestation.
 .DESCRIPTION
-Synthetic software UP/UV claims do not establish trusted assurance. Output files are never silently overwritten. Explicit PassThru forwards application configuration with ClientSecret kept as SecureString, never plaintext. Unix files use 0600; Windows requires a private directory because directory ACLs are inherited. WhatIf performs no I/O.
+Unattended software implementation, not a FIDO-certified authenticator. Synthetic UP/UV claims do not establish authenticator presence, verification or hardware assurance. Output files are never silently overwritten. Explicit PassThru forwards application configuration with ClientSecret kept as SecureString, never plaintext. Unix files use 0600; Windows requires a private directory because directory ACLs are inherited. WhatIf performs no I/O.
 #>
 [CmdletBinding(DefaultParameterSetName = 'ClientSecret', SupportsShouldProcess, ConfirmImpact = 'High')]
 param([Parameter(ValueFromPipeline)][pscustomobject]$ConfigFromPipeline,
@@ -170,6 +170,10 @@ function Get-HttpErrorMessage {
 
     # Exceptions and server bodies may echo bearer material. Never forward them to logs.
     return 'Request failed; server details suppressed.'
+}
+
+function Write-PasskeySoftwareWarning {
+    Write-Warning 'Research automation only: not a FIDO-certified authenticator. These flows do not perform authenticator user presence or verification; any UP/UV flags are synthetic. Tenant policy may reject them.'
 }
 # End source: powershell/src/Common/Values.ps1
 
@@ -766,10 +770,7 @@ function New-EntraSoftwareAuthenticatorData {
 
 function New-EntraSoftwareAttestation {
     param([Parameter(Mandatory)]$Provider, [Parameter(Mandatory)][string]$Challenge,
-        [ValidateSet('None', 'LegacyPacked')][string]$Format = 'None', [switch]$AllowLegacySoftwareAttestation)
-    if ($Format -eq 'LegacyPacked' -and -not $AllowLegacySoftwareAttestation) {
-        throw 'Packed software attestation requires -AllowLegacySoftwareAttestation acknowledgement.'
-    }
+        [ValidateSet('None', 'Packed')][string]$Format = 'None')
     $credentialBytes = [byte[]]::new(32)
     [Security.Cryptography.RandomNumberGenerator]::Fill($credentialBytes)
     $rpId = 'login.microsoft.com'
@@ -777,13 +778,13 @@ function New-EntraSoftwareAttestation {
     $flags = if ($Format -eq 'None') { [byte]0x5D } else { [byte]0x45 }
     $authData = New-EntraSoftwareAuthenticatorData -RpId $rpId -CredentialId $credentialBytes `
         -PublicX $Provider.PublicX -PublicY $Provider.PublicY -Flags $flags
-    if ($Format -eq 'LegacyPacked') { $Challenge = ConvertTo-Base64Url ([Text.Encoding]::UTF8.GetBytes($Challenge)) }
+    if ($Format -eq 'Packed') { $Challenge = ConvertTo-Base64Url ([Text.Encoding]::UTF8.GetBytes($Challenge)) }
     elseif ((Confirm-Base64Url $Challenge) -cne $Challenge -or (ConvertTo-Base64Url (ConvertFrom-Base64Url $Challenge)) -cne $Challenge) { throw 'Graph creation challenge is not canonical base64url.' }
     $clientData = [ordered]@{ type = 'webauthn.create'; challenge = $Challenge; origin = "https://$rpId"; crossOrigin = $false } | ConvertTo-Json -Compress
     $clientBytes = [Text.Encoding]::UTF8.GetBytes($clientData)
     $statement = [ordered]@{}
     $formatName = 'none'
-    if ($Format -eq 'LegacyPacked') {
+    if ($Format -eq 'Packed') {
         $formatName = 'packed'
         # This self-signed batch certificate is compatibility research, not trusted authenticator provenance.
         $batch = [Security.Cryptography.ECDsa]::Create([Security.Cryptography.ECCurve]::CreateFromValue('1.2.840.10045.3.1.7'))
@@ -1061,8 +1062,9 @@ function Register-EntraSoftwarePasskey {
     <# .SYNOPSIS
     Register a research software passkey using Graph application permissions and none attestation.
     .DESCRIPTION
-    Supports local P-256 keys or a Key Vault reference. Synthesized UP/UV flags do not
-    establish fresh human presence, verification or trusted authenticator assurance.
+    Supports local P-256 keys or a Key Vault reference. Unattended software implementation,
+    not a FIDO-certified authenticator. Synthetic UP/UV claims do not establish authenticator
+    presence, verification or hardware assurance. Graph uses none attestation.
     The private-key output is reserved before registration and never silently overwritten.
     WhatIf performs local parameter validation only. Explicit PassThru forwards application configuration
     with ClientSecret kept as SecureString, never plaintext.
@@ -1083,6 +1085,7 @@ function Register-EntraSoftwarePasskey {
         # Defaults absent from PSBoundParameters are still explicit workflow inputs.
         $configuration.DisplayName = $DisplayName
         if (-not $PSCmdlet.ShouldProcess($UserUpn, "Register software passkey '$DisplayName' and save its credential record")) { return }
+        Write-PasskeySoftwareWarning
         $path = Resolve-EntraSoftwareOutputPath -OutputPath $OutputPath -UserPrincipalName $UserUpn -DisplayName $DisplayName
         $stream = $null; $result = $null; $saved = $false
         try {

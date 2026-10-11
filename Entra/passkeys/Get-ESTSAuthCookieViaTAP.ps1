@@ -167,6 +167,10 @@ function Get-HttpErrorMessage {
     # Exceptions and server bodies may echo bearer material. Never forward them to logs.
     return 'Request failed; server details suppressed.'
 }
+
+function Write-PasskeySoftwareWarning {
+    Write-Warning 'Research automation only: not a FIDO-certified authenticator. These flows do not perform authenticator user presence or verification; any UP/UV flags are synthetic. Tenant policy may reject them.'
+}
 # End source: powershell/src/Common/Values.ps1
 
 # Source: powershell/src/Entra/SoftwareBrowserHeaders.ps1

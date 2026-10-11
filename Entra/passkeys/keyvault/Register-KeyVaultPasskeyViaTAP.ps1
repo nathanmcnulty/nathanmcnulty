@@ -269,6 +269,10 @@ function Get-HttpErrorMessage {
     # Exceptions and server bodies may echo bearer material. Never forward them to logs.
     return 'Request failed; server details suppressed.'
 }
+
+function Write-PasskeySoftwareWarning {
+    Write-Warning 'Research automation only: not a FIDO-certified authenticator. These flows do not perform authenticator user presence or verification; any UP/UV flags are synthetic. Tenant policy may reject them.'
+}
 # End source: powershell/src/Common/Values.ps1
 
 # Source: powershell/src/Common/Cbor.ps1
@@ -1254,6 +1258,7 @@ function Save-EntraKeyVaultRegistrationRecord {
 .DESCRIPTION
     Explicit research command. Supports WhatIf without authentication, network or output writes.
     Generates none attestation with AT-only flags. It does not establish authenticator-bound UP/UV.
+    Unattended software implementation, not a FIDO-certified authenticator or evidence of hardware assurance.
     Returns the confirmed credential record after writing its public Key Vault reference.
 #>
 function Register-EntraKeyVaultPasskeyViaTap {
@@ -1290,6 +1295,7 @@ param(
     [string]$RedirectUri = 'https://mysignins.microsoft.com'
 )
     if (-not $PSCmdlet.ShouldProcess("$KeyVaultName / Entra passkey enrollment", 'Authenticate, create a Key Vault key, enroll the passkey, and save its credential record')) { return }
+    Write-PasskeySoftwareWarning
     $context = $null; $key = $null; $token = $null; $attestation = $null
     try {
         $context = New-EntraRegistrationContext -RedirectUri $RedirectUri -UserAgent $UserAgent
