@@ -1,4 +1,4 @@
-﻿#Requires -Version 7.0
+#Requires -Version 7.0
 
 <#
 .SYNOPSIS
@@ -53,12 +53,13 @@
 .PARAMETER UserHandle
     FIDO2 user handle (base64url encoded).
 
-.PARAMETER CredentialId
+.PARAMETER CredentialIdentifier
     FIDO2 credential ID (base64url encoded or UUID format).
+    Alias: CredentialId
 
 .PARAMETER PrivateKey
-    Private key in PEM format or base64 encoded (as SecureString).
-    Can be created with: ConvertTo-SecureString 'key-data' -AsPlainText -Force
+    Private key in PEM format or base64 encoded.
+    Accepts either a string or SecureString. Prefer Azure Key Vault-backed signing for automation.
 
 .PARAMETER RelyingParty
     Relying party identifier. Defaults to "login.microsoft.com".
@@ -101,17 +102,23 @@
 .PARAMETER PassThru
     Output authentication result as PSCustomObject for pipeline support.
 
+.PARAMETER IncludeAuthenticationCookie
+    Include the authenticated ESTS cookie value in PassThru output.
+    Use only when a caller explicitly needs to pass the cookie to later steps.
+
+.PARAMETER PersistSessionToGlobalScope
+    Persist the ESTS cookie and web session to global variables in the current PowerShell process.
+    Disabled by default to avoid leaving authentication material in process scope unless requested.
+
 .EXAMPLE
     .\PasskeyLogin.ps1 -KeyFilePath .\passkey.json
     
     Authenticate using a JSON file containing all passkey details.
 
 .EXAMPLE
-    $privateKey = ConvertTo-SecureString "-----BEGIN PRIVATE KEY-----..." -AsPlainText -Force
-    .\PasskeyLogin.ps1 -UserPrincipalName user@domain.com -UserHandle "base64handle" -CredentialId "base64id" -PrivateKey $privateKey
+    .\PasskeyLogin.ps1 -UserPrincipalName user@domain.com -UserHandle "base64handle" -CredentialId "base64id" -PrivateKey "-----BEGIN PRIVATE KEY-----..."
     
     Authenticate using manual parameters with a local private key.
-    Note: PrivateKey must be provided as a SecureString.
 
 .EXAMPLE
     .\PasskeyLogin.ps1 -KeyFilePath .\passkey.json
@@ -150,61 +157,70 @@
     from the TokenTactics module for easy portability and integration.
 #>
 
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding = $false)]
 param (
-    [Parameter(Mandatory = $false, ValueFromPipeline = $true)]
+    [Parameter(Position = 0, Mandatory = $false, ValueFromPipeline = $true)]
     [PSCustomObject]$CredentialFromPipeline,
     
-    [Parameter(Mandatory = $false)]
+    [Parameter(Position = 1, Mandatory = $false)]
     [string]$KeyFilePath,
 
     [Alias('UserName')]
-    [Parameter(Mandatory = $false)]
+    [Parameter(Position = 2, Mandatory = $false)]
     [string]$UserPrincipalName,
 
-    [Parameter(Mandatory = $false)]
+    [Parameter(Position = 3, Mandatory = $false)]
     [string]$UserHandle,
 
-    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '', Justification='CredentialId is a FIDO2 identifier, not a credential')]
-    [Parameter(Mandatory = $false)]
-    [string]$CredentialId,
+    [Parameter(Position = 4, Mandatory = $false)]
+    [Alias('CredentialIdentifier')]
+    $CredentialId,
 
-    [Parameter(Mandatory = $false)]
-    [SecureString]$PrivateKey,
+    [Parameter(Position = 5, Mandatory = $false)]
+    $PrivateKey,
 
-    [Parameter(Mandatory = $false)]
+    [Parameter(Position = 6, Mandatory = $false)]
     $RelyingParty = "login.microsoft.com",
 
-    [Parameter(Mandatory = $false)]
-    $AuthUrl = "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?response_type=code&redirect_uri=msauth.com.msauth.unsignedapp://auth&scope=https://graph.microsoft.com/.default&client_id=04b07795-8ddb-461a-bbee-02f9e1bf7b46",
+    [Parameter(Position = 7, Mandatory = $false)]
+    $AuthUrl = "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?response_type=code&redirect_uri=https://login.microsoftonline.com/common/oauth2/nativeclient&scope=https://graph.microsoft.com/.default&client_id=04b07795-8ddb-461a-bbee-02f9e1bf7b46",
 
-    [Parameter(Mandatory = $false)]
+    [switch]$ConfirmApplication,
+    [guid]$ExpectedClientId = '04b07795-8ddb-461a-bbee-02f9e1bf7b46',
+
+    [Parameter(Position = 8, Mandatory = $false)]
     $UserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0',
 
-    [Parameter(Mandatory = $false)]
+    [Parameter(Position = 9, Mandatory = $false)]
     [string]$Proxy,
     
     # Key Vault parameters (can be provided for manual mode or to override JSON values)
-    [Parameter(Mandatory = $false)]
+    [Parameter(Position = 10, Mandatory = $false)]
     [string]$KeyVaultName,
     
-    [Parameter(Mandatory = $false)]
+    [Parameter(Position = 11, Mandatory = $false)]
     [string]$KeyVaultKeyName,
     
-    [Parameter(Mandatory = $false)]
+    [Parameter(Position = 12, Mandatory = $false)]
     [string]$KeyVaultAccessToken,
 
-    [Parameter(Mandatory = $false)]
+    [Parameter(Position = 13, Mandatory = $false)]
     [string]$KeyVaultClientId,
 
-    [Parameter(Mandatory = $false)]
+    [Parameter(Position = 14, Mandatory = $false)]
     [string]$KeyVaultClientSecret,
 
-    [Parameter(Mandatory = $false)]
+    [Parameter(Position = 15, Mandatory = $false)]
     [string]$KeyVaultTenantId,
 
+    [Parameter(Position = 16, Mandatory = $false)]
+    [switch]$PassThru,
+
     [Parameter(Mandatory = $false)]
-    [switch]$PassThru
+    [switch]$IncludeAuthenticationCookie,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$PersistSessionToGlobalScope
 )
 
 #region Helper Functions
@@ -216,7 +232,12 @@ function ConvertTo-Base64Url {
 
 function Confirm-Base64Url {
     param([string]$Value)
-    return $Value.TrimEnd('=') -replace '\+','-' -replace '/','_'
+    if ([string]::IsNullOrWhiteSpace($Value) -or $Value -cnotmatch '^[A-Za-z0-9+/_-]+={0,2}$') {
+        throw 'Credential identifier or user handle must be base64url/base64 text.'
+    }
+    $normalized = $Value.TrimEnd('=') -replace '\+','-' -replace '/','_'
+    if ($normalized.Length % 4 -eq 1) { throw 'Invalid base64url length.' }
+    return $normalized
 }
 
 function ConvertFrom-Base64Url {
@@ -299,14 +320,12 @@ function Get-KeyVaultToken {
         try {
             Write-Verbose "Trying Az PowerShell module..."
             $azToken = Get-AzAccessToken -ResourceUrl "https://vault.azure.net" -ErrorAction Stop
-            $token = if ($azToken.Token -is [System.Security.SecureString]) {
-                [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                    [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($azToken.Token))
-            } else { $azToken.Token }
+            $token = ConvertTo-PlainTextValue -Value $azToken.Token
+            if ([string]::IsNullOrWhiteSpace($token)) { throw 'Empty Az token' }
             Write-Host "    ✓ Acquired Key Vault token via Az PowerShell module" -ForegroundColor Green
             return $token
         } catch {
-            Write-Verbose "Az module token acquisition failed: $($_.Exception.Message)"
+            Write-Verbose "Az module token acquisition failed: Details suppressed."
         }
     }
 
@@ -323,7 +342,7 @@ function Get-KeyVaultToken {
                 return $token
             }
         } catch {
-            Write-Verbose "Azure CLI token acquisition failed: $($_.Exception.Message)"
+            Write-Verbose "Azure CLI token acquisition failed: Details suppressed."
         }
     }
 
@@ -338,19 +357,11 @@ function Get-KeyVaultToken {
             scope         = "https://vault.azure.net/.default"
         }
         try {
-            $response = Invoke-RestMethod -Uri $tokenUrl -Method POST -Body $tokenBody -ContentType "application/x-www-form-urlencoded"
+            $response = Invoke-RestMethod -Uri $tokenUrl -Method POST -Body $tokenBody -ContentType "application/x-www-form-urlencoded" -MaximumRedirection 0 -ErrorAction Stop
             Write-Host "    ✓ Acquired Key Vault token via service principal" -ForegroundColor Green
             return $response.access_token
         } catch {
-            $statusCode = $_.Exception.Response.StatusCode.value__
-            $errorMessage = if ($_.ErrorDetails.Message) {
-                try { ($_.ErrorDetails.Message | ConvertFrom-Json).error_description } catch { $_.ErrorDetails.Message }
-            } else { $_.Exception.Message }
-            Write-Error "Failed to acquire Key Vault token via service principal (HTTP $statusCode): $errorMessage"
-            if ($statusCode -eq 401 -or $statusCode -eq 400) {
-                Write-Host "  → Check ClientId, ClientSecret, and TenantId are correct" -ForegroundColor Yellow
-            }
-            throw
+            throw 'Failed to acquire Key Vault token via service principal. Details suppressed.'
         }
     }
 
@@ -395,11 +406,206 @@ function ConvertTo-PEMPrivateKey {
     return $pemKey
 }
 
+function ConvertTo-PlainTextValue {
+    param(
+        [Parameter(Mandatory = $false)]
+        $Value
+    )
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    if ($Value -is [string]) {
+        return $Value
+    }
+
+    if ($Value -is [System.Security.SecureString]) {
+        $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Value)
+        try {
+            return [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+        } finally {
+            if ($bstr -ne [IntPtr]::Zero) {
+                [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+            }
+        }
+    }
+
+    throw "PrivateKey must be either a string or SecureString. Received: $($Value.GetType().FullName)"
+}
+
+function Normalize-OptionalString {
+    param(
+        [AllowNull()]
+        [string]$Value
+    )
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    $trimmedValue = $Value.Trim()
+    if ($trimmedValue.Length -eq 0) {
+        return $null
+    }
+
+    return $trimmedValue
+}
+
+function Resolve-KeyVaultReference {
+    param(
+        [string]$VaultName,
+        [string]$KeyName,
+        [string]$KeyId
+    )
+
+    $resolvedVaultName = Normalize-OptionalString $VaultName
+    $resolvedKeyName = Normalize-OptionalString $KeyName
+    $resolvedKeyId = Normalize-OptionalString $KeyId
+
+    # Match the original text before URI normalization can hide escaped or dot segments.
+    # Public Azure only: sovereign-cloud vaults require a separately reviewed audience/host policy.
+    $referenceValue = if ($resolvedKeyId) { $resolvedKeyId } elseif ($resolvedKeyName -match '^https?://') { $resolvedKeyName } else { $null }
+    if ($referenceValue) {
+        if ($referenceValue -cnotmatch '^https://([a-zA-Z][a-zA-Z0-9-]{1,22}[a-zA-Z0-9])\.vault\.azure\.net(?::443)?/keys/([a-zA-Z0-9-]{1,127})(?:/([a-fA-F0-9]{32}))?$') {
+            throw 'Invalid Key Vault key reference: expected an HTTPS public-Azure vault key URL.'
+        }
+        $urlVault = $Matches[1]
+        $urlKey = $Matches[2]
+        $urlVersion = $Matches[3]
+        if (($resolvedVaultName -and $resolvedVaultName -ine $urlVault) -or
+            ($resolvedKeyName -and $resolvedKeyName -notmatch '^https?://' -and $resolvedKeyName -cne $urlKey) -or
+            ($resolvedKeyId -and $resolvedKeyName -match '^https?://' -and $resolvedKeyName -cne $resolvedKeyId)) {
+            throw 'Key Vault metadata conflicts with keyId. Refusing to change the registered signing key.'
+        }
+        $resolvedVaultName = $urlVault.ToLowerInvariant()
+        $resolvedKeyName = $urlKey
+        $resolvedKeyId = "https://$resolvedVaultName.vault.azure.net/keys/$resolvedKeyName"
+        if ($urlVersion) { $resolvedKeyId += "/$urlVersion" }
+    }
+    if ($resolvedVaultName -cnotmatch '^[a-zA-Z][a-zA-Z0-9-]{1,22}[a-zA-Z0-9]$' -or $resolvedVaultName -match '--' -or
+        $resolvedKeyName -cnotmatch '^[a-zA-Z0-9-]{1,127}$') {
+        throw 'Invalid or incomplete Key Vault vaultName/keyName.'
+    }
+    if (-not $resolvedKeyId) {
+        $resolvedKeyId = "https://$($resolvedVaultName.ToLowerInvariant()).vault.azure.net/keys/$resolvedKeyName"
+    }
+    return @{ vaultName = $resolvedVaultName; keyName = $resolvedKeyName; keyId = $resolvedKeyId }
+}
+
+function Get-HttpErrorMessage {
+    param(
+        [Parameter(Mandatory)]
+        $ErrorRecord
+    )
+
+    # Exceptions and server bodies may echo bearer material. Never forward them to logs.
+    return 'Request failed; server details suppressed.'
+}
+
+function Assert-CredentialData {
+    param([AllowNull()]$Data)
+    if ($Data -isnot [System.Collections.IDictionary]) { throw 'Credential JSON must contain one object.' }
+    foreach ($name in @('username', 'userName', 'userPrincipalName', 'userHandle', 'credentialId', 'relyingParty', 'rpId', 'url', 'privateKey', 'keyValue')) {
+        if ($Data.Contains($name) -and ($Data[$name] -isnot [string] -or [string]::IsNullOrWhiteSpace($Data[$name]))) {
+            throw "Credential property '$name' must be a nonempty string."
+        }
+    }
+    foreach ($name in @('signCount', 'counter')) {
+        if ($Data.Contains($name) -and ($Data[$name] -isnot [long] -and $Data[$name] -isnot [int] -or
+            $Data[$name] -lt 0 -or $Data[$name] -gt [uint32]::MaxValue)) {
+            throw "Credential property '$name' must be a uint32 integer."
+        }
+    }
+    if ($Data.Contains('keyVault')) {
+        if ($Data.keyVault -isnot [System.Collections.IDictionary]) { throw 'Credential keyVault must be an object.' }
+        foreach ($name in @('vaultName', 'keyName', 'keyId')) {
+            if ($Data.keyVault.Contains($name) -and ($Data.keyVault[$name] -isnot [string] -or [string]::IsNullOrWhiteSpace($Data.keyVault[$name]))) {
+                throw "Credential keyVault property '$name' must be a nonempty string."
+            }
+        }
+        $null = Resolve-KeyVaultReference -VaultName $Data.keyVault.vaultName -KeyName $Data.keyVault.keyName -KeyId $Data.keyVault.keyId
+    }
+}
+
+function Select-PreferredEstsCookie {
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]]$Cookies
+    )
+
+    foreach ($cookieName in @('ESTSAUTH', 'ESTSAUTHPERSISTENT', 'ESTSAUTHLIGHT')) {
+        $candidate = $Cookies | Where-Object {
+            $_.Name -eq $cookieName -and $_.Value -and $_.Secure -and -not $_.Expired -and
+            ($_.Expires -eq [datetime]::MinValue -or $_.Expires.ToUniversalTime() -gt [datetime]::UtcNow) -and
+            $_.Domain.TrimStart('.') -in @('login.microsoftonline.com', 'login.microsoft.com', 'login.windows.net')
+        } | Select-Object -First 1
+        if ($candidate) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
+function Get-AllCookiesFromContainer {
+    param(
+        [Parameter(Mandatory)]
+        [System.Net.CookieContainer]$CookieContainer
+    )
+
+    $allCookies = [System.Net.CookieCollection]::new()
+    $getAllCookiesMethod = $CookieContainer.GetType().GetMethod('GetAllCookies', [System.Type[]]@())
+    if ($getAllCookiesMethod) {
+        foreach ($cookie in $getAllCookiesMethod.Invoke($CookieContainer, @())) {
+            [void]$allCookies.Add($cookie)
+        }
+
+        return $allCookies
+    }
+
+    $bindingFlags = [System.Reflection.BindingFlags]'Instance, NonPublic'
+    $domainTableField = $CookieContainer.GetType().GetField('m_domainTable', $bindingFlags)
+    if (-not $domainTableField) {
+        return $allCookies
+    }
+
+    $domainTable = $domainTableField.GetValue($CookieContainer)
+    if (-not $domainTable) {
+        return $allCookies
+    }
+
+    foreach ($pathList in $domainTable.Values) {
+        if (-not $pathList) {
+            continue
+        }
+
+        $pathListField = $pathList.GetType().GetField('m_list', $bindingFlags)
+        if (-not $pathListField) {
+            continue
+        }
+
+        $pathListTable = $pathListField.GetValue($pathList)
+        if (-not $pathListTable) {
+            continue
+        }
+
+        foreach ($cookieCollection in $pathListTable.Values) {
+            foreach ($cookie in $cookieCollection) {
+                [void]$allCookies.Add($cookie)
+            }
+        }
+    }
+
+    return $allCookies
+}
+
 function New-FidoAuthenticatorData {
     param(
         [Parameter(Mandatory)]
         [string]$RpId,
-        [int]$SignCount = 0,
+        [uint32]$SignCount = 0,
         [byte]$Flags = 0x05
     )
 
@@ -409,7 +615,7 @@ function New-FidoAuthenticatorData {
 
     # 2. Flags (1 byte)
     # 3. Counter (Big Endian)
-    $cntBytes = [BitConverter]::GetBytes([int]$SignCount)
+    $cntBytes = [BitConverter]::GetBytes([uint32]$SignCount)
     if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($cntBytes) }
 
     # Combine
@@ -468,7 +674,9 @@ function New-FidoSignature {
         
         # Key Vault expects base64url encoded hash
         $dataBase64Url = ConvertTo-Base64Url -Bytes $dataHash
-        $signUri = "https://$($KeyVaultInfo.vaultName).vault.azure.net/keys/$($KeyVaultInfo.keyName)/sign?api-version=7.4"
+        # Defense in depth: callers of this helper cannot bypass the target validation.
+        $validatedKey = Resolve-KeyVaultReference -VaultName $KeyVaultInfo.vaultName -KeyName $KeyVaultInfo.keyName -KeyId $KeyVaultInfo.keyId
+        $signUri = "$($validatedKey.keyId)/sign?api-version=7.4"
         $headers = @{
             "Authorization" = "Bearer $KeyVaultToken"
             "Content-Type"  = "application/json"
@@ -486,7 +694,7 @@ function New-FidoSignature {
         for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
             try {
                 Write-Verbose "Key Vault sign attempt $attempt of $maxRetries..."
-                $result = Invoke-RestMethod -Uri $signUri -Method POST -Headers $headers -Body $body -ErrorAction Stop
+                $result = Invoke-RestMethod -Uri $signUri -Method POST -Headers $headers -Body $body -MaximumRedirection 0 -ErrorAction Stop
                 
                 # Validate response
                 if (-not $result.value) {
@@ -511,7 +719,7 @@ function New-FidoSignature {
                 break
                 
             } catch {
-                $errorMsg = $_.Exception.Message
+                $errorMsg = Get-HttpErrorMessage -ErrorRecord $_
                 Write-Warning "Key Vault sign attempt $attempt failed: $errorMsg"
                 
                 if ($attempt -lt $maxRetries) {
@@ -520,7 +728,7 @@ function New-FidoSignature {
                     $retryDelay *= 2  # Exponential backoff
                 } else {
                     Write-Error "Key Vault signing failed after $maxRetries attempts: $errorMsg"
-                    throw
+                    throw "Key Vault signing failed. Details suppressed."
                 }
             }
         }
@@ -596,13 +804,40 @@ if ($CredentialFromPipeline) {
     }
 }
 
+$KeyFilePath = Normalize-OptionalString $KeyFilePath
+$UserPrincipalName = Normalize-OptionalString $UserPrincipalName
+$UserHandle = Normalize-OptionalString $UserHandle
+$KeyVaultName = Normalize-OptionalString $KeyVaultName
+$KeyVaultKeyName = Normalize-OptionalString $KeyVaultKeyName
+$KeyVaultAccessToken = Normalize-OptionalString $KeyVaultAccessToken
+$KeyVaultClientId = Normalize-OptionalString $KeyVaultClientId
+$KeyVaultClientSecret = Normalize-OptionalString $KeyVaultClientSecret
+$KeyVaultTenantId = Normalize-OptionalString $KeyVaultTenantId
+$Proxy = Normalize-OptionalString $Proxy
+$AuthUrl = Normalize-OptionalString $AuthUrl
+
+$hasManualKeyVaultReference = (-not [string]::IsNullOrWhiteSpace($KeyVaultName)) -or (-not [string]::IsNullOrWhiteSpace($KeyVaultKeyName))
+$hasCompleteManualKeyVaultReference = (-not [string]::IsNullOrWhiteSpace($KeyVaultName)) -and (-not [string]::IsNullOrWhiteSpace($KeyVaultKeyName))
+
 # Validate required parameters
+if ($null -ne $CredentialId -and $CredentialId -isnot [string]) {
+    throw 'CredentialId must be a string.'
+}
 if (-not $KeyFilePath -and (-not $UserPrincipalName -or -not $UserHandle -or -not $CredentialId)) {
     throw "Either provide -KeyFilePath or specify manual parameters (-UserPrincipalName, -UserHandle, -CredentialId, and either -PrivateKey or -KeyVaultName). Or pipe from New-KeyVaultPasskey.ps1 with -PassThru."
 }
-if (-not $KeyFilePath -and -not $PrivateKey -and -not $KeyVaultName) {
-    throw "Either -PrivateKey or -KeyVaultName must be provided for manual authentication."
+if (-not $KeyFilePath -and $hasManualKeyVaultReference -and -not $hasCompleteManualKeyVaultReference) {
+    throw "Provide both -KeyVaultName and -KeyVaultKeyName for manual Key Vault authentication."
 }
+if (-not $KeyFilePath -and -not $PrivateKey -and -not $hasCompleteManualKeyVaultReference) {
+    throw "Either -PrivateKey or both -KeyVaultName and -KeyVaultKeyName must be provided for manual authentication."
+}
+
+# Initialize invocation-local state, including manual mode.
+$keyData = @{}
+$Debug = $null
+$CurrentPageId = $null
+$LastPageId = $null
 
 # Load key data if file provided
 if ($KeyFilePath) {
@@ -613,10 +848,10 @@ if ($KeyFilePath) {
 
     Write-Host "📂 Loading key data from file: $KeyFilePath" -ForegroundColor Cyan
     try {
-        $keyData = Get-Content $KeyFilePath -Raw | ConvertFrom-Json
+        $keyData = Get-Content -LiteralPath $KeyFilePath -Raw | ConvertFrom-Json -AsHashtable
+        Assert-CredentialData -Data $keyData
     } catch {
-        Write-Error "Invalid JSON in key file: $($_.Exception.Message)"
-        throw
+        throw "Invalid credential file. Expected a credential JSON object with valid property types and Key Vault metadata. Details suppressed."
     }
 }
 
@@ -625,12 +860,11 @@ $PSDefaultParameterValues = @{}
 $PSDefaultParameterValues.Add('Invoke-WebRequest:Verbose', $false)
 
 if ($Proxy) {
-    Write-Verbose "Setting proxy to $Proxy"
     $PSDefaultParameterValues.Add('Invoke-WebRequest:Proxy', $Proxy)
 }
 
 # Determine parameters
-$targetUser = $keyData.username ?? $keyData.userName ?? $UserPrincipalName
+$targetUser = $keyData.username ?? $keyData.userName ?? $keyData.userPrincipalName ?? $UserPrincipalName
 if (-not $targetUser) {
     Write-Error "Username not found in JSON file or command line arguments"
     throw "Missing required parameter: Username"
@@ -646,28 +880,61 @@ $origin = $keyData.url ?? "https://$($rpId)"
 $origin = [uri]"$origin" | Select-Object -ExpandProperty Host
 $origin = "https://$($origin)"
 
-$userHandle = $keyData.userHandle ?? $UserHandle
+$targetUser = Normalize-OptionalString ([string]$targetUser)
+$userHandle = Normalize-OptionalString ([string]($keyData.userHandle ?? $UserHandle))
+
 if (-not $userHandle) {
     Write-Error "UserHandle not found in JSON file or command line arguments"
     throw "Missing required parameter: UserHandle"
 }
 $userHandle = Confirm-Base64Url $userHandle
 
-$credentialId = $keyData.credentialId ?? $CredentialId
-if (-not $credentialId) {
+$credentialIdInput = Normalize-OptionalString ([string]($keyData.credentialId ?? $CredentialId))
+if (-not $credentialIdInput) {
     Write-Error "CredentialId not found in JSON file or command line arguments"
     throw "Missing required parameter: CredentialId"
 }
 
 # Convert UUID format to base64url if necessary, then normalize
-$credentialId = Confirm-Base64Url (ConvertFrom-UuidToBase64Url -Uuid $credentialId)
+$credentialId = Confirm-Base64Url (ConvertFrom-UuidToBase64Url -Uuid ([string]$credentialIdInput))
 
 Write-Host "`n=== Authentication Configuration ===" -ForegroundColor Cyan
 Write-Host "  User:            $targetUser" -ForegroundColor White
 Write-Host "  RP ID:           $rpId" -ForegroundColor White
 Write-Host "  Origin:          $origin" -ForegroundColor White
-Write-Host "  Credential ID:   $($credentialId.Substring(0, [Math]::Min(20, $credentialId.Length)))..." -ForegroundColor White
-Write-Host "  User Handle:     $($userHandle.Substring(0, [Math]::Min(20, $userHandle.Length)))..." -ForegroundColor White
+
+# Validate auth URL
+try {
+    $uriBuilder = [System.UriBuilder]$AuthUrl
+    $query = [System.Web.HttpUtility]::ParseQueryString($uriBuilder.Query)
+} catch {
+    Write-Error "Invalid auth URL format."
+    Write-Error "Error: Details suppressed."
+    throw "Invalid auth URL format."
+}
+
+if (-not [uri]::IsWellFormedUriString($AuthUrl,[UriKind]::Absolute) -or ([uri]$AuthUrl).Scheme -ne "https" -or ([uri]$AuthUrl).Host -ne "login.microsoftonline.com" -or ([uri]$AuthUrl).Port -ne 443 -or ([uri]$AuthUrl).UserInfo) {
+    Write-Error "Auth URL must use the trusted Microsoft HTTPS origin."
+    throw "Invalid auth URL"
+}
+
+# Check required parameters
+# Application confirmation is not OAuth scope consent. Enable only for the explicitly intended client.
+if ($ConfirmApplication) {
+    $clientParameters = @([System.Web.HttpUtility]::ParseQueryString(([uri]$AuthUrl).Query).GetValues('client_id'))
+    $requestedClient = [guid]::Empty
+    if ($clientParameters.Count -ne 1 -or -not [guid]::TryParse($clientParameters[0],[ref]$requestedClient) -or $requestedClient -ne $ExpectedClientId) {
+        throw 'Application confirmation requires the expected client in the authorization URL.'
+    }
+}
+$RequiredParams = @("client_id", "response_type", "redirect_uri")
+foreach ($param in $RequiredParams) {
+    if (-not $query.Get($param)) {
+        Write-Error "Missing required parameter '$param' in auth URL"
+        throw "Invalid auth URL: Missing $param"
+    }
+}
+
 
 # Check if using Key Vault
 $useKeyVault = $false
@@ -677,27 +944,36 @@ $kvToken = $null
 # Determine Key Vault configuration from parameters or JSON
 $resolvedKvName = $KeyVaultName
 $resolvedKvKeyName = $KeyVaultKeyName
+$resolvedKvKeyId = $null
 
 if ($keyData.keyVault) {
-    if (-not $resolvedKvName) { $resolvedKvName = $keyData.keyVault.vaultName }
-    if (-not $resolvedKvKeyName) { $resolvedKvKeyName = $keyData.keyVault.keyName }
+    if (-not $resolvedKvName) { $resolvedKvName = Normalize-OptionalString ([string]$keyData.keyVault.vaultName) }
+    if (-not $resolvedKvKeyName) { $resolvedKvKeyName = Normalize-OptionalString ([string]$keyData.keyVault.keyName) }
+    if ($keyData.keyVault.keyId) { $resolvedKvKeyId = Normalize-OptionalString ([string]$keyData.keyVault.keyId) }
+
+    $resolvedKeyVaultReference = Resolve-KeyVaultReference -VaultName $resolvedKvName -KeyName $resolvedKvKeyName -KeyId $resolvedKvKeyId
     
     # Build kvInfo object for use in signing
     $kvInfo = @{
-        vaultName = $resolvedKvName
-        keyName   = $resolvedKvKeyName
-        keyId     = $keyData.keyVault.keyId
+        vaultName = $resolvedKeyVaultReference.vaultName
+        keyName   = $resolvedKeyVaultReference.keyName
+        keyId     = $resolvedKeyVaultReference.keyId
     }
-} elseif ($KeyVaultName -and $KeyVaultKeyName) {
+} elseif ($resolvedKvName -and $resolvedKvKeyName) {
+    $resolvedKeyVaultReference = Resolve-KeyVaultReference -VaultName $resolvedKvName -KeyName $resolvedKvKeyName -KeyId $null
     # Manual Key Vault mode (no JSON keyVault object, but parameters provided)
     $kvInfo = @{
-        vaultName = $KeyVaultName
-        keyName   = $KeyVaultKeyName
-        keyId     = $null
+        vaultName = $resolvedKeyVaultReference.vaultName
+        keyName   = $resolvedKeyVaultReference.keyName
+        keyId     = $resolvedKeyVaultReference.keyId
     }
 }
 
 if ($kvInfo) {
+    if ($PrivateKey) {
+        Write-Warning "Both Key Vault and private-key inputs were provided. Using Azure Key Vault and ignoring private-key."
+    }
+
     Write-Host "`n=== Key Vault Configuration ===" -ForegroundColor Cyan
     Write-Host "  Vault Name:      $($kvInfo.vaultName)" -ForegroundColor White
     Write-Host "  Key Name:        $($kvInfo.keyName)" -ForegroundColor White
@@ -716,22 +992,21 @@ if ($kvInfo) {
     $kvToken = Get-KeyVaultToken -AccessToken $KeyVaultAccessToken -TenantId $kvTenantId -ClientId $kvClientId -ClientSecret $kvClientSecret
     Write-Host "  ✓ Key Vault authenticated successfully" -ForegroundColor Green
 } else {
+    Write-Warning "Using local private key fallback. Prefer Azure Key Vault-backed signing for shared or long-lived automation."
     Write-Host "`n  🔑 Using local private key" -ForegroundColor Cyan
 }
 
 # Private Key (for local signing)
-[int]$SignCount = $keyData.signCount ?? $keyData.counter ?? 0
+[uint32]$SignCount = $keyData.signCount ?? $keyData.counter ?? 0
 $PrivateKeyPem = $null
 
 if (-not $useKeyVault) {
     # Get private key from JSON or parameter
     $privateKeySource = $keyData.privateKey ?? $keyData.keyValue ?? $null
     
-    # If no JSON key and we have a parameter, convert SecureString to plain text
+    # If no JSON key and we have a parameter, normalize it to plain text for import
     if (-not $privateKeySource -and $PrivateKey) {
-        $privateKeySource = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
-            [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrivateKey)
-        )
+        $privateKeySource = ConvertTo-PlainTextValue -Value $PrivateKey
     }
     
     if (-not $privateKeySource) {
@@ -757,39 +1032,14 @@ if (-not $useKeyVault) {
 $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 $session.UserAgent = $UserAgent
 
-# Validate auth URL
-try {
-    $uriBuilder = [System.UriBuilder]$AuthUrl
-    $query = [System.Web.HttpUtility]::ParseQueryString($uriBuilder.Query)
-} catch {
-    Write-Error "Invalid auth URL format: $AuthUrl"
-    Write-Error "Error: $($_.Exception.Message)"
-    throw
-}
-
-if ($AuthUrl -notmatch "^https://login.microsoftonline.com/") {
-    Write-Error "Auth URL must start with 'https://login.microsoftonline.com/'. Current: $AuthUrl"
-    throw "Invalid auth URL"
-}
-
-# Check required parameters
-$RequiredParams = @("client_id", "response_type", "redirect_uri")
-foreach ($param in $RequiredParams) {
-    if (-not $query.Get($param)) {
-        Write-Error "Missing required parameter '$param' in auth URL"
-        throw "Invalid auth URL: Missing $param"
-    }
-}
-
 # Add additional parameters
 if (-not $query.Get("sso_reload")) {
     $AuthUrl = "$AuthUrl&sso_reload=true"
 }
 if (-not $query.Get("login_hint")) {
-    $AuthUrl = "$AuthUrl&login_hint=$targetUser"
+    $AuthUrl = "$AuthUrl&login_hint=$([uri]::EscapeDataString($targetUser))"
 }
 
-Write-Verbose "Auth URL: $AuthUrl"
 
 # Initial request
 Write-Host "`n=== Initiating Authentication Flow ===" -ForegroundColor Cyan
@@ -846,9 +1096,9 @@ try {
     $credentialsJson = $SessionInformation.oGetCredTypeResult.Credentials.FidoParams.AllowList -join ','
     Write-Host "  ✓ FIDO2 assertion generated successfully" -ForegroundColor Green
 } catch {
-    Write-Error "FIDO Assertion generation failed: $($_.Exception.Message)"
+    Write-Error "FIDO Assertion generation failed: Details suppressed."
     Write-Host "  → Check private key or Key Vault access" -ForegroundColor Yellow
-    throw
+    throw "FIDO assertion generation failed. Details suppressed."
 }
 
 # Submit verification request
@@ -877,20 +1127,18 @@ try {
     
     if ($respVerify.StatusCode -ge 400) {
         Write-Error "Verification request failed with HTTP $($respVerify.StatusCode)"
-        Write-Verbose "Response: $($respVerify.Content)"
         throw "Pre-verification failed"
     }
     
     if (-not ($respVerify.Content -match '{(.*)}')){        Write-Error "Unexpected response format from verification endpoint"
-        Write-Verbose "Response: $($respVerify.Content)"
         throw "Invalid verification response"
     }
     
     $ResponseInformation = $Matches[0] | ConvertFrom-Json
     Write-Host "  ✓ Pre-verification completed" -ForegroundColor Green
 } catch {
-    Write-Error "Verification request failed: $($_.Exception.Message)"
-    throw
+    Write-Error "Verification request failed: Details suppressed."
+    throw "Verification request failed. Details suppressed."
 }
 
 # Submit FIDO2 assertion
@@ -907,15 +1155,22 @@ $Payload = @{
 }
 
 Write-Host "  Submitting FIDO2 assertion..." -ForegroundColor Gray
-Write-Verbose "Assertion payload: $($fidoPayload | ConvertTo-Json -Compress)"
-Write-Verbose "Login URI: $LoginUri"
 
-$respFinalize = Invoke-WebRequest -UseBasicParsing -Uri $LoginUri -Method Post -Body $Payload -WebSession $session -MaximumRedirection 0 -SkipHttpErrorCheck
+$submitParams = @{
+    UseBasicParsing = $true
+    Uri = $LoginUri
+    Method = 'Post'
+    Body = $Payload
+    WebSession = $session
+    MaximumRedirection = 10
+    SkipHttpErrorCheck = $true
+}
+
+$respFinalize = Invoke-WebRequest @submitParams
 
 Write-Verbose "Initial response status: $($respFinalize.StatusCode)"
 if ($respFinalize.StatusCode -ge 400) {
     Write-Warning "Assertion submission returned HTTP $($respFinalize.StatusCode)"
-    Write-Verbose "Response content: $($respFinalize.Content)"
 }
 
 # Key Vault signatures may need processing time
@@ -929,14 +1184,15 @@ $LoginUri = "https://login.microsoftonline.com/common/login?sso_reload=true"
 $Payload.flowToken = $SessionInformation.oGetCredTypeResult.FlowToken
 
 Write-Host "  Submitting with SSO reload..." -ForegroundColor Gray
-Write-Verbose "SSO reload URI: $LoginUri"
 
-$respFinalize = Invoke-WebRequest -UseBasicParsing -Uri $LoginUri -Method Post -Body $Payload -WebSession $session -MaximumRedirection 0 -SkipHttpErrorCheck
+$submitParams.Uri = $LoginUri
+$submitParams.Body = $Payload
+
+$respFinalize = Invoke-WebRequest @submitParams
 
 Write-Verbose "SSO reload response status: $($respFinalize.StatusCode)"
 if ($respFinalize.StatusCode -ge 400) {
     Write-Warning "SSO reload returned HTTP $($respFinalize.StatusCode)"
-    Write-Verbose "Response content: $($respFinalize.Content)"
 }
 
 # Key Vault signatures may need processing time before parsing
@@ -957,17 +1213,19 @@ if (-not ($respFinalize.Content -match '{(.*)}')) {
             $CurrentPageId = $Debug.pgid
         }
     } catch {
-        Write-Verbose "Failed to parse response JSON: $($_.Exception.Message)"
+        Write-Verbose "Failed to parse response JSON: Details suppressed."
         $Debug = @{ pgid = $null }
     }
 }
 
 # Handle interrupts (CMSI, KMSI, etc.)
 $LoopCount = 0
+$LastPageId = $null
+$CurrentPageId = $Debug.pgid
 $authenticationFailed = $false
 $InterruptHandlers = @{
     "CmsiInterrupt" = @{
-        Message = "Handling consent prompt"
+        Message = "Confirming explicitly selected application (not OAuth permission consent)"
         Uri = "https://login.microsoftonline.com/appverify"
         Method = "Post"
         Body = @{
@@ -980,6 +1238,7 @@ $InterruptHandlers = @{
             ctx = { $Debug.sCtx }
         }
     }
+
     "KmsiInterrupt" = @{
         Message = "Handling KMSI prompt"
         Uri = "https://login.microsoftonline.com/kmsi"
@@ -996,13 +1255,25 @@ $InterruptHandlers = @{
     }
     "ConvergedSignIn" = @{
         Message = "Handling ConvergedSignIn"
-        Uri = { $Debug.urlLogin + "&sessionid=$(($Debug.arrSessions[0].id ?? $Debug.sessionId))" }
+        Uri = {
+            $loginUri = [uri]::new([uri]'https://login.microsoftonline.com/', [string]$Debug.urlLogin)
+            if ($loginUri.Scheme -ne 'https' -or $loginUri.Host -ne 'login.microsoftonline.com' -or $loginUri.Port -ne 443 -or $loginUri.UserInfo) {
+                throw 'Untrusted ConvergedSignIn login URL.'
+            }
+            $sessionId = if ($Debug.arrSessions -and $Debug.arrSessions.Count -gt 0) { $Debug.arrSessions[0].id } else { $Debug.sessionId }
+            $separator = if ($loginUri.Query) { '&' } else { '?' }
+            $loginUri.AbsoluteUri + $separator + 'sessionid=' + [uri]::EscapeDataString([string]$sessionId)
+        }
         Method = "Get"
     }
 }
 
-while ($Debug.pgid -in $InterruptHandlers.Keys) {
-    if ($CurrentPageId -eq $LastPageId -or ++$LoopCount -gt 10) {
+while ($Debug.pgid -in $InterruptHandlers.Keys -or $Debug.pgid -eq "CmsiInterrupt") {
+    if ($Debug.pgid -eq "CmsiInterrupt" -and -not $ConfirmApplication) {
+        throw "Application confirmation is required. The unattended passkey action will not submit approval."
+    }
+    $CurrentPageId = $Debug.pgid
+    if (($CurrentPageId -eq $LastPageId -and $CurrentPageId -ne "ConvergedSignIn") -or ++$LoopCount -gt 10) {
         $authenticationFailed = $true
         Write-Error "$(if ($CurrentPageId -eq $LastPageId) { 'Stuck in' } else { 'Exceeded maximum' }) interrupt loop. Authentication failed."
         Write-Verbose "LastPageId: $LastPageId, CurrentPageId: $CurrentPageId, LoopCount: $LoopCount"
@@ -1059,7 +1330,7 @@ while ($Debug.pgid -in $InterruptHandlers.Keys) {
         }
     } catch {
         Write-Warning "Failed to parse JSON response. Exiting loop."
-        Write-Verbose "Parse error: $($_.Exception.Message)"
+        Write-Verbose "Parse error: Details suppressed."
         break
     }
 }
@@ -1096,19 +1367,38 @@ if ($useKeyVault) {
 
 # Check success
 Write-Host "`n=== Verifying Authentication Result ===" -ForegroundColor Cyan
-$allCookies = $session.Cookies.GetCookies("https://login.microsoftonline.com")
-Write-Verbose "Checking cookies: $($allCookies.Name -join ', ')"
+$allCookies = @(Get-AllCookiesFromContainer -CookieContainer $session.Cookies)
+$estsCookies = @(Select-PreferredEstsCookie -Cookies $allCookies | Where-Object { $null -ne $_ })
 
-if ($allCookies | Where-Object Name -Like "ESTS*") {
+if ($estsCookies.Count -eq 0) {
+    foreach ($attempt in 1..3) {
+        Write-Host "  Finalizing authenticated session (attempt $attempt of 3)..." -ForegroundColor Gray
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri $AuthUrl -Method Get -WebSession $session -MaximumRedirection 0 -SkipHttpErrorCheck | Out-Null
+        } catch {
+            Write-Verbose "Finalization request failed on attempt ${attempt}: Details suppressed."
+        }
+
+        Start-Sleep -Milliseconds 250
+        $allCookies = @(Get-AllCookiesFromContainer -CookieContainer $session.Cookies)
+        $estsCookies = @(Select-PreferredEstsCookie -Cookies $allCookies | Where-Object { $null -ne $_ })
+        if ($estsCookies.Count -gt 0) {
+            break
+        }
+    }
+}
+
+$cookieSummary = $allCookies |
+    Sort-Object Domain, Name, Path -Unique |
+    ForEach-Object { '{0}@{1}{2}' -f $_.Name, $_.Domain, $_.Path }
+Write-Verbose "Checking cookies across session: $($cookieSummary -join ', ')"
+
+if ($estsCookies.Count -gt 0) {
     Write-Host "`n╭────────────────────────────────────────────────────────────╮" -ForegroundColor Green
     Write-Host "│                  ✓ Authentication Successful!                 │" -ForegroundColor Green
     Write-Host "╰────────────────────────────────────────────────────────────╯" -ForegroundColor Green
     
-    $ESTSAUTH = $allCookies | Where-Object Name -EQ "ESTSAUTH"
-    $ESTSAUTHPERSISTENT = $allCookies | Where-Object Name -EQ "ESTSAUTHPERSISTENT"
-    $ESTSAUTHLIGHT = $allCookies | Where-Object Name -EQ "ESTSAUTHLIGHT"
-    
-    $ests = @($ESTSAUTH, $ESTSAUTHPERSISTENT, $ESTSAUTHLIGHT) | Sort-Object { $_.Value.Length } -Descending | Select-Object -First 1
+    $ests = Select-PreferredEstsCookie -Cookies $allCookies
     
     if ($ests) {
         Write-Host "`nAuthentication Details:" -ForegroundColor Cyan
@@ -1120,16 +1410,24 @@ if ($allCookies | Where-Object Name -Like "ESTS*") {
             Write-Host "  Signature Method:   Local Private Key" -ForegroundColor White
         }
         Write-Host "  Cookie Type:        $($ests.Name)" -ForegroundColor White
-        
-        Write-Host "`nSession Information:" -ForegroundColor Cyan
-        Write-Host "  Token saved to:     `$global:ESTSAUTH" -ForegroundColor Gray
-        Write-Host "  Session saved to:   `$global:webSession" -ForegroundColor Gray
-        Write-Host "  Token preview:      $($ests.Value.Substring(0, [Math]::Min(40, $ests.Value.Length)))..." -ForegroundColor Gray
-        
-        $global:ESTSAUTH = $ests.Value
-        $global:webSession = $session
-        
-        Write-Host "`n✓ Ready to use authenticated session for API calls" -ForegroundColor Green
+        if ($ests.Name -eq 'ESTSAUTH') {
+            Write-Host "  Cookie Use:         Preferred for downstream ESTS cookie consumers" -ForegroundColor White
+        }
+
+        if ($PersistSessionToGlobalScope) {
+            $global:ESTSCookie = $ests.Value
+            $global:ESTSAUTH = $ests.Value # Legacy alias, only when explicitly requested
+            $global:ESTSCookieName = $ests.Name
+            $global:webSession = $session
+            Write-Host "`nSession Information:" -ForegroundColor Cyan
+            Write-Host "  Cookie saved to:    `$global:ESTSCookie" -ForegroundColor Gray
+            Write-Host "  Cookie name saved:  `$global:ESTSCookieName" -ForegroundColor Gray
+            Write-Host "  Session saved to:   `$global:webSession" -ForegroundColor Gray
+            Write-Host "`n✓ Ready to use authenticated session for API calls in the current process" -ForegroundColor Green
+        } else {
+            Write-Host "`n✓ Authentication material will remain scoped to this invocation unless explicitly exported by the caller" -ForegroundColor Green
+        }
+
         Write-Host ""
         
         # Output authentication result for pipeline support
@@ -1140,8 +1438,11 @@ if ($allCookies | Where-Object Name -Like "ESTS*") {
                 SignatureMethod       = if ($useKeyVault) { "Azure Key Vault" } else { "Local Private Key" }
                 KeyVaultName          = if ($useKeyVault) { $kvInfo.vaultName } else { $null }
                 CookieType            = $ests.Name
-                TokenVariable         = 'ESTSAUTH'
-                SessionVariable       = 'webSession'
+                AuthenticationCookieName = $ests.Name
+                AuthenticationCookieValue = if ($IncludeAuthenticationCookie) { $ests.Value } else { $null }
+                TokenVariable         = if ($PersistSessionToGlobalScope) { 'ESTSAUTH' } else { $null }
+                SessionVariable       = if ($PersistSessionToGlobalScope) { 'webSession' } else { $null }
+                SessionPersistedToGlobalScope = [bool]$PersistSessionToGlobalScope
                 AuthenticationTime    = Get-Date
                 Success               = $true
             }
@@ -1149,9 +1450,27 @@ if ($allCookies | Where-Object Name -Like "ESTS*") {
         }
     }
 } else {
+    $cookieNamesByDomain = $allCookies |
+        Group-Object Domain |
+        Sort-Object Name |
+        ForEach-Object {
+            $cookieNames = $_.Group.Name | Sort-Object -Unique
+            '{0}: {1}' -f $_.Name, ($cookieNames -join ', ')
+        }
+
     Write-Warning "Login flow completed but authentication success could not be verified"
-    Write-Host "  Session may still be usable - saved to `$global:webSession" -ForegroundColor Yellow
-    $global:webSession = $session
+    if ($cookieNamesByDomain) {
+        Write-Host "  Session cookies discovered by domain:" -ForegroundColor Yellow
+        foreach ($domainCookieSummary in $cookieNamesByDomain) {
+            Write-Host "    $domainCookieSummary" -ForegroundColor Yellow
+        }
+    }
+    if ($PersistSessionToGlobalScope) {
+        Write-Host "  Session may still be usable - saved to `$global:webSession" -ForegroundColor Yellow
+        $global:webSession = $session
+    } else {
+        Write-Host "  Re-run with -PersistSessionToGlobalScope if you need the web session retained in the current process" -ForegroundColor Yellow
+    }
     
     # Output incomplete result for pipeline support
     if ($PassThru) {
@@ -1161,8 +1480,11 @@ if ($allCookies | Where-Object Name -Like "ESTS*") {
             SignatureMethod       = if ($useKeyVault) { "Azure Key Vault" } else { "Local Private Key" }
             KeyVaultName          = if ($useKeyVault) { $kvInfo.vaultName } else { $null }
             CookieType            = $null
+            AuthenticationCookieName = $null
+            AuthenticationCookieValue = $null
             TokenVariable         = $null
-            SessionVariable       = 'webSession'
+            SessionVariable       = if ($PersistSessionToGlobalScope) { 'webSession' } else { $null }
+            SessionPersistedToGlobalScope = [bool]$PersistSessionToGlobalScope
             AuthenticationTime    = Get-Date
             Success               = $false
         }
