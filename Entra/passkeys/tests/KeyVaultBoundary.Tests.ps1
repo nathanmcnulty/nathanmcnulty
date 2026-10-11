@@ -99,18 +99,10 @@ Describe 'Cookie selection' {
     }
 }
 Describe 'Interrupt loop state' {
-    It 'initializes previous/current page locally and bounds repeated ConvergedSignIn' {
-        $scriptText | Should -Match '\$LastPageId = \$null'
-        $scriptText | Should -Match '\$CurrentPageId = \$Debug.pgid'
-        $loop=$ast.Find({param($n) $n -is [Management.Automation.Language.WhileStatementAst] -and $n.Condition.Extent.Text -match 'CmsiInterrupt'},$true)
-        $Debug=@{pgid='ConvergedSignIn'};$CurrentPageId='ConvergedSignIn';$LastPageId=$null;$LoopCount=0;$useKeyVault=$false;$authenticationFailed=$false
-        $InterruptHandlers=@{ConvergedSignIn=@{Uri='https://login.microsoftonline.com/test';Method='Get';Message='offline'}}
-        $session=[Microsoft.PowerShell.Commands.WebRequestSession]::new()
-        Mock Invoke-WebRequest { @{Content='{"pgid":"ConvergedSignIn"}'} }
-        Mock Start-Sleep {}
-        # The loop emits a nonterminating diagnostic before the surrounding script throws.
-        # GitHub's pwsh wrapper sets Stop; explicitly test the complete loop here.
-        & { $ErrorActionPreference = 'Continue'; & ([scriptblock]::Create($loop.Extent.Text)) } 2>$null
+    It 'bounds repeated ConvergedSignIn through the complete function' {
+        $context=@{Session=[Microsoft.PowerShell.Commands.WebRequestSession]::new();PageState=@{pgid='ConvergedSignIn';urlLogin='/common/login';sessionId='fixture'}}
+        Mock Invoke-WebRequest { @{StatusCode=200;Content='{"pgid":"ConvergedSignIn","urlLogin":"/common/login","sessionId":"fixture"}'} }
+        {Resolve-EntraLoginInterrupts -Context $context} | Should -Throw '*interrupt loop*'
         Should -Invoke Invoke-WebRequest -Times 10 -Exactly
     }
 }
@@ -130,33 +122,30 @@ Describe 'AuthUrl validation before token acquisition' {
 }
 Describe 'Result output contract' {
     BeforeEach {
-        $session = [Microsoft.PowerShell.Commands.WebRequestSession]::new()
-        $PassThru = $true; $IncludeAuthenticationCookie = $false; $PersistSessionToGlobalScope = $false
-        $targetUser = 'user@example.com'; $useKeyVault = $false; $AuthUrl='https://login.microsoftonline.com/'
-        Mock Start-Sleep {}
-        Mock Invoke-WebRequest {}
-        $resultBlock = [scriptblock]::Create($scriptText.Substring($scriptText.IndexOf('# Check success')))
+        $context=@{Session=[Microsoft.PowerShell.Commands.WebRequestSession]::new();UserPrincipalName='user@example.com';AuthUrl='https://login.microsoftonline.com/'}
+        Mock Invoke-WebRequest { @{StatusCode=200;Content='{}'} }
     }
     It 'returns Success false without any cookie, including after retries' {
-        $result = & $resultBlock
+        $result=Complete-EntraPasskeyLogin -Context $context
         $result.Success | Should -BeFalse
         $result.AuthenticationCookieValue | Should -BeNullOrEmpty
         Should -Invoke Invoke-WebRequest -Times 3 -Exactly
     }
     It 'does not declare success for a foreign ESTSAUTH cookie' {
-        $cookie = [Net.Cookie]::new('ESTSAUTH','foreign','/','attacker.invalid'); $cookie.Secure=$true
-        $session.Cookies.Add($cookie)
-        (& $resultBlock).Success | Should -BeFalse
+        $cookie=[Net.Cookie]::new('ESTSAUTH','foreign','/','attacker.invalid');$cookie.Secure=$true
+        $context.Session.Cookies.Add($cookie)
+        (Complete-EntraPasskeyLogin -Context $context).Success | Should -BeFalse
     }
     It 'returns metadata without bearer material by default and exports only when requested' {
-        $cookie = [Net.Cookie]::new('ESTSAUTH','offline-cookie','/','login.microsoftonline.com');$cookie.Secure=$true
-        $session.Cookies.Add($cookie)
-        $result = & $resultBlock
+        $cookie=[Net.Cookie]::new('ESTSAUTH','offline-cookie','/','login.microsoftonline.com');$cookie.Secure=$true
+        $context.Session.Cookies.Add($cookie)
+        $result=Complete-EntraPasskeyLogin -Context $context
         $result.Success | Should -BeTrue
         $result.AuthenticationCookieValue | Should -BeNullOrEmpty
         $result.SessionPersistedToGlobalScope | Should -BeFalse
-        $IncludeAuthenticationCookie = $true
-        (& $resultBlock).AuthenticationCookieValue | Should -BeExactly 'offline-cookie'
+        (Complete-EntraPasskeyLogin -Context $context -IncludeAuthenticationCookie).AuthenticationCookieValue | Should -BeExactly 'offline-cookie'
+        $result.UserPresenceVerified | Should -BeFalse
+        $result.UserVerificationVerified | Should -BeFalse
     }
 }
 Describe 'Compatibility normalization and interrupt destination' {
@@ -169,13 +158,13 @@ Describe 'Compatibility normalization and interrupt destination' {
         {Confirm-Base64Url 'abc=def'} | Should -Throw
     }
     It 'pins ConvergedSignIn origin and safely handles absent arrSessions' {
-        $tableAst=$ast.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$InterruptHandlers'},$true)
-        . ([scriptblock]::Create($tableAst.Extent.Text))
-        $Debug=@{urlLogin='/common/login';sessionId='x&other=value'}
-        (& $InterruptHandlers.ConvergedSignIn.Uri) | Should -BeExactly 'https://login.microsoftonline.com/common/login?sessionid=x%26other%3Dvalue'
+        $context=@{Session=[Microsoft.PowerShell.Commands.WebRequestSession]::new();PageState=@{pgid='ConvergedSignIn';urlLogin='/common/login';sessionId='x&other=value'}}
+        Mock Invoke-WebRequest { @{StatusCode=200;Content='{}'} }
+        Resolve-EntraLoginInterrupts -Context $context
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {$Uri -ceq 'https://login.microsoftonline.com/common/login?sessionid=x%26other%3Dvalue'}
         foreach ($url in @('https://attacker.invalid/login','http://login.microsoftonline.com/login','https://login.microsoftonline.com:444/login','https://user@login.microsoftonline.com/login')) {
-            $Debug=@{urlLogin=$url;sessionId='dummy'}
-            {& $InterruptHandlers.ConvergedSignIn.Uri} | Should -Throw '*Untrusted*'
+            $context.PageState=@{pgid='ConvergedSignIn';urlLogin=$url;sessionId='dummy'}
+            {Resolve-EntraLoginInterrupts -Context $context} | Should -Throw '*Untrusted*'
         }
     }
 }

@@ -1,371 +1,46 @@
-﻿#Requires -Version 7.0
+#Requires -Version 7.6
 
-<#
-.SYNOPSIS
-    Generates a software-based passkey (FIDO2) and registers it in Entra ID.
-
+<# .SYNOPSIS
+Register a research Entra software passkey with Graph application authentication and none attestation.
 .DESCRIPTION
-    Creates a software passkey with "none" attestation format. Does NOT use a hardware
-    security key - the private key is generated locally and saved for future authentication.
-    
-    **IMPORTANT**: Requires application permissions (UserAuthenticationMethod.ReadWrite.All).
-    Also requires attestation enforcement disabled in Entra ID FIDO2 settings.
-    
-    Supports three authentication methods (mutually exclusive):
-    1. Managed Identity (recommended) - No credentials needed, automatic token management
-    2. Certificate-based Service Principal (recommended for non-Azure) - Most secure with certificate
-    3. Client Secret Service Principal - Less secure, use only when other methods aren't available
-
-.PARAMETER UserUpn
-    The user's UPN in Entra ID.
-
-.PARAMETER DisplayName
-    The display name for the passkey (default: "Software Passkey").
-
-.PARAMETER ClientId
-    The application (client) ID with UserAuthenticationMethod.ReadWrite.All application permission.
-    Required for Certificate and ClientSecret parameter sets.
-
-.PARAMETER ClientSecret
-    The client secret for service principal authentication (as SecureString).
-    Parameter Set: ClientSecret
-    NOTE: Less secure than certificate-based authentication. Consider using -ClientCertificatePath instead.
-    Can be created with: ConvertTo-SecureString 'secret' -AsPlainText -Force
-
-.PARAMETER ClientCertificatePath
-    Path to the PFX certificate file for service principal authentication.
-    Parameter Set: Certificate
-    Recommended over client secrets per Microsoft Security Benchmark IM-3.2.
-
-.PARAMETER ClientCertificatePassword
-    Password for the PFX certificate file (if encrypted).
-    Parameter Set: Certificate
-
-.PARAMETER UseManagedIdentity
-    Use Azure Managed Identity for authentication.
-    Parameter Set: ManagedIdentity
-    Most secure option - no credential management required.
-    Must be run from an Azure resource with managed identity enabled (VM, App Service, Function App, etc.).
-
-.PARAMETER OutputPath
-    Path to save the credential JSON file. Defaults to current directory.
-
-.EXAMPLE
-    $secret = ConvertTo-SecureString "your-secret" -AsPlainText -Force
-    .\New-KeyVaultPasskey.ps1 -UserUpn "user@contoso.com" -DisplayName "Test Key" `
-        -ClientId "your-app-id" -ClientSecret $secret
-    
-    Authenticates using client secret (least secure method).
-    Note: ClientSecret must be provided as a SecureString.
-
-.EXAMPLE
-    .\New-KeyVaultPasskey.ps1 -UserUpn "user@contoso.com" -DisplayName "Test Key" `
-        -ClientId "your-app-id" -ClientCertificatePath "C:\certs\app.pfx" `
-        -ClientCertificatePassword "cert-password"
-    
-    Authenticates using certificate (more secure, recommended for service principals).
-
-.EXAMPLE
-    .\New-KeyVaultPasskey.ps1 -UserUpn "user@contoso.com" -DisplayName "Test Key" `
-        -UseManagedIdentity -UseKeyVault -KeyVaultName "my-keyvault" -TenantId "tenant-id"
-    
-    Authenticates using Managed Identity (most secure, no credential management).
-
-.NOTES
-    Author: Nathan McNulty
-    Based on work by Jos Lieben (Lieben Consultancy)
-    Date: February 6, 2026
-    
-    Security Best Practices (Microsoft Security Benchmark):
-    - IM-3: Prefer Managed Identity when running on Azure resources
-    - IM-3.2: Use certificate-based auth over client secrets for service principals
-    - Managed Identity eliminates credential exposure and rotation needs
-    - Certificates enable phishing-resistant authentication with Conditional Access
+Synthetic software UP/UV claims do not establish trusted assurance. Output files are never silently overwritten. Explicit PassThru forwards application configuration with ClientSecret kept as SecureString, never plaintext. Unix files use 0600; Windows requires a private directory because directory ACLs are inherited. WhatIf performs no I/O.
 #>
+[CmdletBinding(DefaultParameterSetName = 'ClientSecret', SupportsShouldProcess, ConfirmImpact = 'High')]
+param([Parameter(ValueFromPipeline)][pscustomobject]$ConfigFromPipeline,
+        [Parameter(Mandatory)][string]$UserUpn, [ValidateLength(1,100)][string]$DisplayName = 'Software Passkey',
+        [Parameter(ParameterSetName = 'ClientSecret')][Parameter(ParameterSetName = 'Certificate')][string]$ClientId,
+        [Parameter(ParameterSetName = 'ClientSecret')][securestring]$ClientSecret,
+        [Parameter(ParameterSetName = 'Certificate')][string]$ClientCertificatePath,
+        [Parameter(ParameterSetName = 'Certificate')][securestring]$ClientCertificatePassword,
+        [Parameter(ParameterSetName = 'ManagedIdentity')][switch]$UseManagedIdentity,
+        [string]$OutputPath, [switch]$UseKeyVault, [string]$KeyVaultName, [string]$TenantId, [switch]$PassThru)
 
-[CmdletBinding(DefaultParameterSetName = 'ClientSecret', SupportsShouldProcess = $true)]
-param(
-    [Parameter(Mandatory = $false, ValueFromPipeline = $true)]
-    [PSCustomObject]$ConfigFromPipeline,
-    
-    [Parameter(Mandatory = $true)]
-    [string]$UserUpn,
-    
-    [Parameter(Mandatory = $false)]
-    [string]$DisplayName = "Software Passkey",
-    
-    # Authentication - ClientSecret Parameter Set
-    [Parameter(Mandatory = $false, ParameterSetName = 'ClientSecret')]
-    [Parameter(Mandatory = $false, ParameterSetName = 'Certificate')]
-    [string]$ClientId,
-    
-    [Parameter(Mandatory = $false, ParameterSetName = 'ClientSecret')]
-    [SecureString]$ClientSecret,
-    
-    # Authentication - Certificate Parameter Set
-    [Parameter(Mandatory = $false, ParameterSetName = 'Certificate')]
-    [ValidateScript({Test-Path $_ -PathType Leaf})]
-    [string]$ClientCertificatePath,
-    
-    [Parameter(Mandatory = $false, ParameterSetName = 'Certificate')]
-    [SecureString]$ClientCertificatePassword,
-    
-    # Authentication - Managed Identity Parameter Set
-    [Parameter(Mandatory = $false, ParameterSetName = 'ManagedIdentity')]
-    [switch]$UseManagedIdentity,
-    
-    [Parameter(Mandatory = $false)]
-    [string]$OutputPath,
-    
-    # Key Vault options
-    [Parameter(Mandatory = $false)]
-    [switch]$UseKeyVault,
-    
-    [Parameter(Mandatory = $false)]
-    [string]$KeyVaultName,
-    
-    [Parameter(Mandatory = $false)]
-    [string]$TenantId,
-    
-    [Parameter(Mandatory = $false)]
-    [switch]$PassThru
-)
+# Generated by build/build.ps1. DO NOT EDIT.
+# Passkey source version: 0.1.0
+# Edit the following source files, then run build/build.ps1:
+#   powershell/entrypoints/Register-EntraSoftwarePasskey.ps1
+#   powershell/src/Common/Encoding.ps1
+#   powershell/src/Common/Values.ps1
+#   powershell/src/Common/Cbor.ps1
+#   powershell/src/Entra/SoftwareBrowserHeaders.ps1
+#   powershell/src/Entra/SoftwareSession.ps1
+#   powershell/src/Entra/SoftwareAuthorization.ps1
+#   powershell/src/Entra/SoftwareAuthentication.ps1
+#   powershell/src/KeyVault/Reference.ps1
+#   powershell/src/KeyVault/ProvisioningKeys.ps1
+#   powershell/src/Local/RegistrationKey.ps1
+#   powershell/src/Entra/SoftwareAttestation.ps1
+#   powershell/src/Entra/SoftwareCredential.ps1
+#   powershell/src/Entra/SoftwareOutput.ps1
+#   powershell/src/Entra/SoftwareGraphAuthentication.ps1
+#   powershell/src/Entra/SoftwareGraphRegistration.ps1
+#   powershell/src/Entra/SoftwareConfiguration.ps1
+#   powershell/src/Public/RegisterSoftwarePasskey.ps1
 
-$ErrorActionPreference = "Stop"
-
-# Apply pipeline configuration if provided
-if ($ConfigFromPipeline) {
-    if (-not $ClientId -and $ConfigFromPipeline.ApplicationId) { $ClientId = $ConfigFromPipeline.ApplicationId }
-    if (-not $ClientSecret -and $ConfigFromPipeline.ClientSecret) {
-        # Check if it looks like a GUID (secret ID) instead of actual secret
-        if ($ConfigFromPipeline.ClientSecret -match '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$') {
-            Write-Error "Pipeline provided a GUID as ClientSecret - this is the secret ID, not the secret value!"
-            Write-Error "The secret value should be a long random string, not a GUID."
-            throw "Invalid client secret format received from pipeline"
-        }
-        
-        # Convert plain text from pipeline to SecureString
-        $ClientSecret = ConvertTo-SecureString $ConfigFromPipeline.ClientSecret -AsPlainText -Force
-        Write-Verbose "Converted pipeline ClientSecret to SecureString (length: $($ConfigFromPipeline.ClientSecret.Length))"
-    }
-    if (-not $TenantId -and $ConfigFromPipeline.TenantId) { $TenantId = $ConfigFromPipeline.TenantId }
-    if (-not $KeyVaultName -and $ConfigFromPipeline.KeyVaultName) { $KeyVaultName = $ConfigFromPipeline.KeyVaultName }
-    if (-not $UseKeyVault -and $ConfigFromPipeline.UseKeyVault) { $UseKeyVault = $true }
-}
-
-# Validate authentication parameters
-if (-not $UseManagedIdentity) {
-    if (-not $ClientId) {
-        throw "ClientId is required. Provide via -ClientId parameter or Initialize-PasskeyKeyVault pipeline."
-    }
-    if ($PSCmdlet.ParameterSetName -eq 'ClientSecret' -and -not $ClientSecret) {
-        throw "ClientSecret is required for ClientSecret authentication."
-    }
-    if ($PSCmdlet.ParameterSetName -eq 'Certificate' -and -not $ClientCertificatePath) {
-        throw "ClientCertificatePath is required for Certificate authentication."
-    }
-}
-
-# Validate UserUpn format
-if ($UserUpn -notmatch '^[^@]+@[^@]+\.[^@]+$') {
-    throw "Invalid UserUpn format. Expected format: user@domain.com"
-}
-
-# Validate Key Vault parameters
-if ($UseKeyVault) {
-    if (-not $KeyVaultName) { throw "KeyVaultName required for UseKeyVault" }
-    if (-not $TenantId -and -not $UseManagedIdentity) { throw "TenantId required for UseKeyVault" }
-    Write-Host "Key Vault: $KeyVaultName (private key secured in HSM for Premium SKU)" -ForegroundColor Cyan
-} else {
-    Write-Host "Local key generation (private key in file)" -ForegroundColor Cyan
-}
-
-# Display authentication method  
-Write-Host "Auth: " -NoNewline -ForegroundColor Cyan
-switch ($PSCmdlet.ParameterSetName) {
-    'ManagedIdentity' { Write-Host "Managed Identity" -ForegroundColor Green }
-    'Certificate' { Write-Host "Certificate" -ForegroundColor Green }
-    'ClientSecret' { Write-Host "Client Secret" -ForegroundColor Yellow }
-}
-
-#region Helper Functions
-
-function Get-ManagedIdentityToken {
-    param([string]$Scope)
-    
-    $apiVersion = "2019-08-01"
-    $resource = $Scope -replace '/.default$', ''
-    $endpoint = "http://169.254.169.254/metadata/identity/oauth2/token?api-version=$apiVersion&resource=$resource"
-    
-    try {
-        $response = Invoke-RestMethod -Uri $endpoint -Method GET -Headers @{ Metadata = "true" }
-        return $response.access_token
-    } catch {
-        throw "Failed to acquire Managed Identity token for $Scope. Ensure running on Azure resource with Managed Identity enabled."
-    }
-}
-
-function Get-ServicePrincipalToken {
-    param(
-        [string]$TenantId,
-        [string]$ClientId,
-        [SecureString]$ClientSecret,
-        [string]$ClientCertificatePath,
-        [SecureString]$ClientCertificatePassword,
-        [string]$Scope,
-        [switch]$UseManagedIdentity
-    )
-    
-    if ($UseManagedIdentity) {
-        return Get-ManagedIdentityToken -Scope $Scope
-    }
-    
-    $tokenUrl = "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/token"
-    
-    if ($ClientSecret) {
-        # Client Secret authentication - convert SecureString to plain text for API call
-        $plainSecret = [System.Net.NetworkCredential]::new('', $ClientSecret).Password
-        
-        # Diagnostic: Validate the secret format before sending
-        Write-Verbose "Secret length after SecureString conversion: $($plainSecret.Length) chars"
-        
-        if ([string]::IsNullOrEmpty($plainSecret)) {
-            Write-Error "SecureString conversion resulted in empty string!"
-            throw "Client secret conversion failed - empty result"
-        }
-        
-        if ($plainSecret -match '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$') {
-            Write-Error "SecureString contains a GUID - this is the secret ID, not the secret value!"
-            Write-Error "The pipeline may have passed the wrong value."
-            throw "Invalid client secret format - received GUID instead of secret value"
-        }
-        
-        $tokenBody = @{
-            grant_type    = "client_credentials"
-            client_id     = $ClientId
-            client_secret = $plainSecret
-            scope         = $Scope
-        }
-        
-        try {
-            $response = Invoke-RestMethod -Uri $tokenUrl -Method POST -Body $tokenBody -ContentType "application/x-www-form-urlencoded"
-            return $response.access_token
-        } catch {
-            Write-Error "Token acquisition failed for scope $Scope : $($_.Exception.Message)"
-            throw
-        } finally {
-            # Clear the plain text secret from memory
-            if ($plainSecret) { Remove-Variable -Name plainSecret -ErrorAction SilentlyContinue }
-        }
-    } elseif ($ClientCertificatePath) {
-        # Certificate-based authentication
-        try {
-            # Load certificate
-            $cert = if ($ClientCertificatePassword) {
-                $plainPassword = [System.Net.NetworkCredential]::new('', $ClientCertificatePassword).Password
-                [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($ClientCertificatePath, $plainPassword)
-            } else {
-                [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($ClientCertificatePath)
-            }
-            
-            # Check certificate validity
-            $now = Get-Date
-            if ($cert.NotBefore -gt $now) {
-                Write-Warning "Certificate is not yet valid. Valid from: $($cert.NotBefore)"
-            }
-            if ($cert.NotAfter -lt $now) {
-                throw "Certificate has expired on $($cert.NotAfter). Please use a valid certificate."
-            }
-            $daysUntilExpiry = ($cert.NotAfter - $now).Days
-            if ($daysUntilExpiry -lt 30) {
-                Write-Warning "Certificate expires soon ($daysUntilExpiry days remaining). Consider renewing."
-            }
-            
-            # Create JWT assertion
-            $thumbprint = $cert.Thumbprint
-            $header = @{
-                alg = "RS256"
-                typ = "JWT"
-                x5t = [Convert]::ToBase64String([System.Convert]::FromHexString($thumbprint))
-            } | ConvertTo-Json -Compress
-            
-            $now = [Math]::Floor([decimal](Get-Date -UFormat "%s"))
-            $nbf = $now
-            $exp = $now + 600  # 10 minutes validity
-            
-            $payload = @{
-                aud = $tokenUrl
-                iss = $ClientId
-                sub = $ClientId
-                jti = [guid]::NewGuid().ToString()
-                nbf = $nbf
-                exp = $exp
-            } | ConvertTo-Json -Compress
-            
-            # Base64Url encode
-            $headerBase64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($header)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-            $payloadBase64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($payload)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-            $dataToSign = "$headerBase64.$payloadBase64"
-            
-            # Sign with certificate private key
-            $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
-            $signature = $rsa.SignData([System.Text.Encoding]::UTF8.GetBytes($dataToSign), [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
-            $signatureBase64 = [Convert]::ToBase64String($signature).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-            
-            $assertion = "$dataToSign.$signatureBase64"
-            
-            # Request token
-            $tokenBody = @{
-                grant_type            = "client_credentials"
-                client_id             = $ClientId
-                client_assertion_type = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-                client_assertion      = $assertion
-                scope                 = $Scope
-            }
-            
-            $response = Invoke-RestMethod -Uri $tokenUrl -Method POST -Body $tokenBody -ContentType "application/x-www-form-urlencoded"
-            return $response.access_token
-        } catch {
-            $errorDetails = if ($_.ErrorDetails.Message) { $_.ErrorDetails.Message } else { $_.Exception.Message }
-            Write-Error "Failed to acquire token with certificate for scope $Scope : $errorDetails"
-            throw
-        }
-    }
-    
-    throw "No valid authentication method provided"
-}
-
-function New-KeyVaultKey {
-    param(
-        [string]$KeyVaultName,
-        [string]$KeyName,
-        [string]$AccessToken
-    )
-    
-    $createUri = "https://$KeyVaultName.vault.azure.net/keys/$KeyName/create?api-version=7.4"
-    $headers = @{
-        "Authorization" = "Bearer $AccessToken"
-        "Content-Type"  = "application/json"
-    }
-    $body = @{
-        kty     = "EC"
-        crv     = "P-256"
-        key_ops = @("sign", "verify")
-    } | ConvertTo-Json
-    
-    try {
-        $result = Invoke-RestMethod -Uri $createUri -Method POST -Headers $headers -Body $body
-        return $result
-    } catch {
-        Write-Error "Failed to create key in Key Vault: $_"
-        throw
-    }
-}
-
+# Source: powershell/src/Common/Encoding.ps1
 function ConvertTo-Base64Url {
     param([byte[]]$Bytes)
-    $base64 = [Convert]::ToBase64String($Bytes)
-    return $base64.TrimEnd('=').Replace('+', '-').Replace('/', '_')
+    return [Convert]::ToBase64String($Bytes).Replace('+', '-').Replace('/', '_').TrimEnd('=')
 }
 
 function ConvertFrom-Base64Url {
@@ -377,554 +52,1069 @@ function ConvertFrom-Base64Url {
     return [Convert]::FromBase64String($base64)
 }
 
-function Get-TokenParameters {
-    param(
-        [string]$Scope,
-        [string]$ResolvedTenantId,
-        [string]$ClientId,
-        [SecureString]$ClientSecret,
-        [string]$ClientCertificatePath,
-        [SecureString]$ClientCertificatePassword,
-        [string]$ParameterSetName,
-        [switch]$UseManagedIdentity
-    )
-    
-    $tokenParams = @{
-        Scope = $Scope
+function Confirm-Base64Url {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value) -or $Value -cnotmatch '^[A-Za-z0-9+/_-]+={0,2}$') {
+        throw 'Credential identifier or user handle must be base64url/base64 text.'
     }
-    
-    if ($UseManagedIdentity) {
-        $tokenParams['UseManagedIdentity'] = $true
-    } else {
-        $tokenParams['TenantId'] = $ResolvedTenantId
-        $tokenParams['ClientId'] = $ClientId
-        if ($ParameterSetName -eq 'ClientSecret') {
-            $tokenParams['ClientSecret'] = $ClientSecret
-        } elseif ($ParameterSetName -eq 'Certificate') {
-            $tokenParams['ClientCertificatePath'] = $ClientCertificatePath
-            if ($ClientCertificatePassword) {
-                $tokenParams['ClientCertificatePassword'] = $ClientCertificatePassword
-            }
-        }
-    }
-    
-    return $tokenParams
+    $normalized = $Value.TrimEnd('=') -replace '\+','-' -replace '/','_'
+    if ($normalized.Length % 4 -eq 1) { throw 'Invalid base64url length.' }
+    return $normalized
 }
 
-function New-CBOREncoded {
-    param($Value)
+function ConvertFrom-UuidToBase64Url {
+    param([string]$Uuid)
 
-    $byteListType = 'System.Collections.Generic.List[byte]'
-
-    if ($Value -is [hashtable] -or $Value -is [System.Collections.Specialized.OrderedDictionary]) {
-        $entries = New-Object $byteListType
-        foreach ($entry in $Value.GetEnumerator()) {
-            $keyEncoded = New-CBOREncoded $entry.Key
-            $valEncoded = New-CBOREncoded $entry.Value
-            $entries.AddRange([byte[]]$keyEncoded)
-            $entries.AddRange([byte[]]$valEncoded)
-        }
-        $result = New-Object $byteListType
-        $mapCount = $Value.Count
-        if ($mapCount -lt 24) {
-            $result.Add([byte](0xA0 + $mapCount))
-        } else {
-            $result.Add([byte]0xB8)
-            $result.Add([byte]$mapCount)
-        }
-        $result.AddRange($entries)
-        return , $result.ToArray()
+    if ($Uuid -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
+        return $Uuid  # Not a UUID, return as-is
     }
 
-    if ($Value -is [byte[]]) {
-        $len = $Value.Length
-        $result = New-Object $byteListType
-        if ($len -lt 24) {
-            $result.Add([byte](0x40 + $len))
-        } elseif ($len -lt 256) {
-            $result.Add([byte]0x58)
-            $result.Add([byte]$len)
-        } elseif ($len -lt 65536) {
-            $result.Add([byte]0x59)
-            $u16 = [uint16]$len
-            $lenBytes = [System.BitConverter]::GetBytes($u16)
-            if ([System.BitConverter]::IsLittleEndian) { [Array]::Reverse($lenBytes) }
-            $result.AddRange([byte[]]$lenBytes)
-        }
-        $result.AddRange([byte[]]$Value)
-        return , $result.ToArray()
+    Write-Verbose "Converting UUID format credential ID to base64url"
+    $hexString = $Uuid.Replace('-', '')
+    $rawBytes = [byte[]]::new($hexString.Length / 2)
+    for ($i = 0; $i -lt $hexString.Length; $i += 2) {
+        $rawBytes[$i / 2] = [Convert]::ToByte($hexString.Substring($i, 2), 16)
+    }
+    $base64 = [Convert]::ToBase64String($rawBytes)
+    return $base64.Replace('+', '-').Replace('/', '_').TrimEnd('=')
+}
+
+function ConvertFrom-IeeeToDer {
+    param([byte[]]$IeeeSignature)
+
+    # IEEE P1363 format for ES256 is r || s (32 + 32 bytes)
+    # DER format is: 0x30 <length> 0x02 <r-length> <r> 0x02 <s-length> <s>
+
+    if ($IeeeSignature.Length -ne 64) {
+        throw "Invalid IEEE P1363 signature length: $($IeeeSignature.Length). Expected 64 bytes for ES256."
+    }
+
+    $r = $IeeeSignature[0..31]
+    $s = $IeeeSignature[32..63]
+
+    # Remove leading zero bytes but keep at least one byte
+    while ($r.Length -gt 1 -and $r[0] -eq 0) { $r = $r[1..($r.Length-1)] }
+    while ($s.Length -gt 1 -and $s[0] -eq 0) { $s = $s[1..($s.Length-1)] }
+
+    # Add leading zero if high bit is set (to keep it positive)
+    if ($r[0] -ge 0x80) { $r = @(0) + $r }
+    if ($s[0] -ge 0x80) { $s = @(0) + $s }
+
+    # Build DER sequence
+    $der = @(
+        0x30,  # SEQUENCE tag
+        ($r.Length + $s.Length + 4),  # Total length
+        0x02,  # INTEGER tag for r
+        $r.Length
+    ) + $r + @(
+        0x02,  # INTEGER tag for s
+        $s.Length
+    ) + $s
+
+    return [byte[]]$der
+}
+# End source: powershell/src/Common/Encoding.ps1
+
+# Source: powershell/src/Common/Values.ps1
+function ConvertTo-PlainTextValue {
+    param(
+        [Parameter(Mandatory = $false)]
+        $Value
+    )
+
+    if ($null -eq $Value) {
+        return $null
     }
 
     if ($Value -is [string]) {
-        $strBytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
-        $len = $strBytes.Length
-        $result = New-Object $byteListType
-        if ($len -lt 24) {
-            $result.Add([byte](0x60 + $len))
-        } elseif ($len -lt 256) {
-            $result.Add([byte]0x78)
-            $result.Add([byte]$len)
-        } elseif ($len -lt 65536) {
-            $result.Add([byte]0x79)
-            $u16 = [uint16]$len
-            $lenBytes = [System.BitConverter]::GetBytes($u16)
-            if ([System.BitConverter]::IsLittleEndian) { [Array]::Reverse($lenBytes) }
-            $result.AddRange([byte[]]$lenBytes)
-        }
-        $result.AddRange([byte[]]$strBytes)
-        return , $result.ToArray()
+        return $Value
     }
+
+    if ($Value -is [System.Security.SecureString]) {
+        $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Value)
+        try {
+            return [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+        } finally {
+            if ($bstr -ne [IntPtr]::Zero) {
+                [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+            }
+        }
+    }
+
+    throw "PrivateKey must be either a string or SecureString. Received: $($Value.GetType().FullName)"
+}
+
+function Normalize-OptionalString {
+    param(
+        [AllowNull()]
+        [string]$Value
+    )
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    $trimmedValue = $Value.Trim()
+    if ($trimmedValue.Length -eq 0) {
+        return $null
+    }
+
+    return $trimmedValue
+}
+
+function Get-HttpErrorMessage {
+    param(
+        [Parameter(Mandatory)]
+        $ErrorRecord
+    )
+
+    # Exceptions and server bodies may echo bearer material. Never forward them to logs.
+    return 'Request failed; server details suppressed.'
+}
+# End source: powershell/src/Common/Values.ps1
+
+# Source: powershell/src/Common/Cbor.ps1
+function New-CBOREncoded {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        $Value
+    )
+
+    $bytes = [System.Collections.Generic.List[byte]]::new()
 
     if ($Value -is [int] -or $Value -is [long]) {
         if ($Value -ge 0) {
-            if ($Value -lt 24) {
-                return , [byte[]]@([byte]$Value)
-            } elseif ($Value -lt 256) {
-                return , [byte[]]@(0x18, [byte]$Value)
-            } elseif ($Value -lt 65536) {
-                $u16 = [uint16]$Value
-                $numBytes = [System.BitConverter]::GetBytes($u16)
-                if ([System.BitConverter]::IsLittleEndian) { [Array]::Reverse($numBytes) }
-                $out = [byte[]]::new(3)
-                $out[0] = 0x19
-                $out[1] = $numBytes[0]
-                $out[2] = $numBytes[1]
-                return , $out
+            if ($Value -le 23) { $bytes.Add([byte]$Value) }
+            elseif ($Value -le 255) { $bytes.Add(0x18); $bytes.Add([byte]$Value) }
+            elseif ($Value -le 65535) {
+                $bytes.Add(0x19)
+                $lenBytes = [BitConverter]::GetBytes([uint16]$Value)
+                [Array]::Reverse($lenBytes)
+                $bytes.AddRange([byte[]]$lenBytes)
+            } else {
+                $bytes.Add(0x1A)
+                $lenBytes = [BitConverter]::GetBytes([uint32]$Value)
+                [Array]::Reverse($lenBytes)
+                $bytes.AddRange([byte[]]$lenBytes)
             }
         } else {
-            $posVal = -1 - $Value
-            if ($posVal -lt 24) {
-                return , [byte[]]@([byte](0x20 + $posVal))
-            } elseif ($posVal -lt 256) {
-                return , [byte[]]@(0x38, [byte]$posVal)
-            } elseif ($posVal -lt 65536) {
-                $u16 = [uint16]$posVal
-                $numBytes = [System.BitConverter]::GetBytes($u16)
-                if ([System.BitConverter]::IsLittleEndian) { [Array]::Reverse($numBytes) }
-                $out = [byte[]]::new(3)
-                $out[0] = 0x39
-                $out[1] = $numBytes[0]
-                $out[2] = $numBytes[1]
-                return , $out
+            $n = -1 - $Value
+            if ($n -le 23) { $bytes.Add([byte](0x20 + $n)) }
+            elseif ($n -le 255) { $bytes.Add(0x38); $bytes.Add([byte]$n) }
+            elseif ($n -le 65535) {
+                $bytes.Add(0x39)
+                $lenBytes = [BitConverter]::GetBytes([uint16]$n)
+                [Array]::Reverse($lenBytes)
+                $bytes.AddRange([byte[]]$lenBytes)
+            } else {
+                $bytes.Add(0x3A)
+                $lenBytes = [BitConverter]::GetBytes([uint32]$n)
+                [Array]::Reverse($lenBytes)
+                $bytes.AddRange([byte[]]$lenBytes)
             }
         }
-    }
+    } elseif ($Value -is [string]) {
+        $textBytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+        if ($textBytes.Length -le 23) { $bytes.Add([byte](0x60 + $textBytes.Length)) }
+        elseif ($textBytes.Length -le 255) { $bytes.Add(0x78); $bytes.Add([byte]$textBytes.Length) }
+        elseif ($textBytes.Length -le 65535) {
+            $bytes.Add(0x79)
+            $lenBytes = [BitConverter]::GetBytes([uint16]$textBytes.Length)
+            [Array]::Reverse($lenBytes)
+            $bytes.AddRange([byte[]]$lenBytes)
+        } else {
+            $bytes.Add(0x7A)
+            $lenBytes = [BitConverter]::GetBytes([uint32]$textBytes.Length)
+            [Array]::Reverse($lenBytes)
+            $bytes.AddRange([byte[]]$lenBytes)
+        }
 
-    if ($Value -is [array]) {
-        $arrCount = $Value.Count
-        $result = New-Object $byteListType
-        if ($arrCount -lt 24) {
-            $result.Add([byte](0x80 + $arrCount))
+        $bytes.AddRange([byte[]]$textBytes)
+    } elseif ($Value -is [byte[]]) {
+        if ($Value.Length -le 23) { $bytes.Add([byte](0x40 + $Value.Length)) }
+        elseif ($Value.Length -le 255) { $bytes.Add(0x58); $bytes.Add([byte]$Value.Length) }
+        elseif ($Value.Length -le 65535) {
+            $bytes.Add(0x59)
+            $lenBytes = [BitConverter]::GetBytes([uint16]$Value.Length)
+            [Array]::Reverse($lenBytes)
+            $bytes.AddRange([byte[]]$lenBytes)
         } else {
-            $result.Add([byte]0x98)
-            $result.Add([byte]$arrCount)
+            $bytes.Add(0x5A)
+            $lenBytes = [BitConverter]::GetBytes([uint32]$Value.Length)
+            [Array]::Reverse($lenBytes)
+            $bytes.AddRange([byte[]]$lenBytes)
         }
+
+        $bytes.AddRange([byte[]]$Value)
+    } elseif ($Value -is [System.Array]) {
+        $count = $Value.Length
+        if ($count -le 23) { $bytes.Add([byte](0x80 + $count)) }
+        elseif ($count -le 255) { $bytes.Add(0x98); $bytes.Add([byte]$count) }
+        else {
+            $bytes.Add(0x99)
+            $lenBytes = [BitConverter]::GetBytes([uint16]$count)
+            [Array]::Reverse($lenBytes)
+            $bytes.AddRange([byte[]]$lenBytes)
+        }
+
         foreach ($item in $Value) {
-            $encoded = New-CBOREncoded $item
-            $result.AddRange([byte[]]$encoded)
+            $itemBytes = New-CBOREncoded -Value $item
+            if ($itemBytes -is [byte]) { $bytes.Add($itemBytes) } else { $bytes.AddRange([byte[]]$itemBytes) }
         }
-        return , $result.ToArray()
+    } elseif ($Value -is [System.Collections.IDictionary]) {
+        $count = $Value.Count
+        if ($count -le 23) { $bytes.Add([byte](0xA0 + $count)) }
+        elseif ($count -le 255) { $bytes.Add(0xB8); $bytes.Add([byte]$count) }
+        else {
+            $bytes.Add(0xB9)
+            $lenBytes = [BitConverter]::GetBytes([uint16]$count)
+            [Array]::Reverse($lenBytes)
+            $bytes.AddRange([byte[]]$lenBytes)
+        }
+
+        foreach ($entry in $Value.GetEnumerator()) {
+            $keyBytes = New-CBOREncoded -Value $entry.Key
+            $valueBytes = New-CBOREncoded -Value $entry.Value
+            if ($keyBytes -is [byte]) { $bytes.Add($keyBytes) } else { $bytes.AddRange([byte[]]$keyBytes) }
+            if ($valueBytes -is [byte]) { $bytes.Add($valueBytes) } else { $bytes.AddRange([byte[]]$valueBytes) }
+        }
+    } else {
+        throw "Unsupported CBOR value type: $($Value.GetType().FullName)"
     }
 
-    throw "Unsupported CBOR type: $($Value.GetType().Name)"
+    return ,[byte[]]$bytes.ToArray()
 }
+# End source: powershell/src/Common/Cbor.ps1
 
-function New-AttestationObject {
-    param([byte[]]$AuthData)
-    $attObj = [ordered]@{
-        "fmt"      = "none"
-        "attStmt"  = [ordered]@{}
-        "authData" = $AuthData
-    }
-    return New-CBOREncoded $attObj
-}
-
-function New-AuthenticatorData {
+# Source: powershell/src/Entra/SoftwareBrowserHeaders.ps1
+function Add-PasskeyBrowserHeaders {
+    [CmdletBinding()]
     param(
-        [byte[]]$RpIdHash,
-        [byte[]]$CredentialId,
-        [byte[]]$PublicKeyX,
-        [byte[]]$PublicKeyY
+        [Parameter(Mandatory)]
+        [hashtable]$Headers
     )
 
-    $result = New-Object 'System.Collections.Generic.List[byte]'
-    $result.AddRange($RpIdHash)
-    $result.Add([byte]0x5D)
-    $result.AddRange([byte[]]@(0, 0, 0, 0))
-    $result.AddRange([byte[]]::new(16))
-
-    $credIdLen = $CredentialId.Length
-    $result.Add([byte](($credIdLen -shr 8) -band 0xFF))
-    $result.Add([byte]($credIdLen -band 0xFF))
-    $result.AddRange($CredentialId)
-
-    $coseKey = [ordered]@{
-        [int]1  = [int]2
-        [int]3  = [int]-7
-        [int]-1 = [int]1
-        [int]-2 = [byte[]]$PublicKeyX
-        [int]-3 = [byte[]]$PublicKeyY
+    if (-not $Headers.ContainsKey('User-Agent')) {
+        $Headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0'
     }
-    $result.AddRange([byte[]](New-CBOREncoded $coseKey))
 
-    return $result.ToArray()
+    if (-not $Headers.ContainsKey('Accept')) {
+        $Headers['Accept'] = '*/*'
+    }
+
+    if (-not $Headers.ContainsKey('Accept-Language')) {
+        $Headers['Accept-Language'] = 'en-US'
+    }
+
+    if (-not $Headers.ContainsKey('sec-ch-ua')) {
+        $Headers['sec-ch-ua'] = '"Chromium";v="149", "Microsoft Edge";v="149", "Not_A Brand";v="99"'
+    }
+
+    if (-not $Headers.ContainsKey('sec-ch-ua-mobile')) {
+        $Headers['sec-ch-ua-mobile'] = '?0'
+    }
+
+    if (-not $Headers.ContainsKey('sec-ch-ua-platform')) {
+        $Headers['sec-ch-ua-platform'] = '"Windows"'
+    }
+
+    if (-not $Headers.ContainsKey('Sec-Fetch-Dest')) {
+        $Headers['Sec-Fetch-Dest'] = 'empty'
+    }
+
+    if (-not $Headers.ContainsKey('Sec-Fetch-Mode')) {
+        $Headers['Sec-Fetch-Mode'] = 'cors'
+    }
+
+    if (-not $Headers.ContainsKey('Sec-Fetch-Site')) {
+        $Headers['Sec-Fetch-Site'] = 'same-origin'
+    }
+}
+# End source: powershell/src/Entra/SoftwareBrowserHeaders.ps1
+
+# Source: powershell/src/Entra/SoftwareSession.ps1
+# Shared My Sign-ins registration transport and request state. Loading this file has no side effects.
+function Assert-EntraRegistrationUri {
+    param([Parameter(Mandatory)][string]$Uri)
+    $parsed = $null
+    if (-not [uri]::TryCreate($Uri, [UriKind]::Absolute, [ref]$parsed) -or
+        $parsed.Scheme -ne 'https' -or $parsed.Port -ne 443 -or $parsed.UserInfo -or
+        $parsed.Host -notin @('login.microsoftonline.com', 'login.microsoft.com', 'mysignins.microsoft.com')) {
+        throw 'Registration endpoint is outside the allowed HTTPS origins.'
+    }
+    return $parsed
 }
 
-#endregion
-
-#region Main
-
-Write-Host "`n=== Authenticating ===" -ForegroundColor Cyan
-
-# Determine tenant ID
-if ($UseManagedIdentity) {
-    $resolvedTenantId = $null
-} elseif ($UseKeyVault) {
-    $resolvedTenantId = $TenantId
-} else {
-    $resolvedTenantId = (Invoke-RestMethod "https://login.microsoftonline.com/$($UserUpn.Split('@')[1])/.well-known/openid-configuration").userinfo_endpoint.Split("/")[3]
+function Invoke-EntraRegistrationWebRequest {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Uri, [string]$Method = 'GET', $Body,
+        [string]$ContentType, [hashtable]$Headers, $WebSession)
+    $null = Assert-EntraRegistrationUri $Uri
+    $request = @{} + $PSBoundParameters
+    $request.Headers = if ($null -ne $Headers) { @{} + $Headers } else { @{} }
+    if ($null -ne $WebSession -and $WebSession.UserAgent) { $request.Headers['User-Agent'] = $WebSession.UserAgent }
+    Add-PasskeyBrowserHeaders -Headers $request.Headers
+    $request.MaximumRedirection = 0
+    $request.SkipHttpErrorCheck = $true
+    $request.ConnectionTimeoutSeconds = 60
+    $request.OperationTimeoutSeconds = 60
+    $request.Verbose = $false
+    $request.Debug = $false
+    # No automatic redirects: authentication data must stay on the checked origin.
+    Microsoft.PowerShell.Utility\Invoke-WebRequest @request
 }
 
-Write-Host "  Acquiring tokens..." -ForegroundColor Gray
+function Invoke-EntraRegistrationRestMethod {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Uri, [string]$Method = 'GET', $Body,
+        [string]$ContentType, [hashtable]$Headers, $WebSession)
+    $response = Invoke-EntraRegistrationWebRequest @PSBoundParameters
+    if ([int]$response.StatusCode -lt 200 -or [int]$response.StatusCode -ge 300) {
+        throw 'Registration request was not successful; response details suppressed.'
+    }
+    try { return ($response.Content | ConvertFrom-Json -ErrorAction Stop) }
+    catch { throw 'Registration endpoint returned an invalid JSON response.' }
+}
 
-if ($UseKeyVault) {
-    # Get tokens for both Key Vault and Graph API
-    $graphTokenParams = Get-TokenParameters -Scope "https://graph.microsoft.com/.default" `
-        -ResolvedTenantId $resolvedTenantId -ClientId $ClientId -ClientSecret $ClientSecret `
-        -ClientCertificatePath $ClientCertificatePath -ClientCertificatePassword $ClientCertificatePassword `
-        -ParameterSetName $PSCmdlet.ParameterSetName -UseManagedIdentity:$UseManagedIdentity
-    
-    $graphToken = Get-ServicePrincipalToken @graphTokenParams
-    Start-Sleep -Seconds 2  # Brief delay for Azure AD replication
-    
-    $kvTokenParams = Get-TokenParameters -Scope "https://vault.azure.net/.default" `
-        -ResolvedTenantId $resolvedTenantId -ClientId $ClientId -ClientSecret $ClientSecret `
-        -ClientCertificatePath $ClientCertificatePath -ClientCertificatePassword $ClientCertificatePassword `
-        -ParameterSetName $PSCmdlet.ParameterSetName -UseManagedIdentity:$UseManagedIdentity
-    
-    # Retry logic for Key Vault token
-    $maxRetries = 3
-    $retryCount = 0
-    $kvToken = $null
-    
-    while (-not $kvToken -and $retryCount -lt $maxRetries) {
+function ConvertTo-EntraRegistrationForm {
+    param([Parameter(Mandatory)][System.Collections.IDictionary]$Fields)
+    return (($Fields.GetEnumerator() | ForEach-Object {
+        [Web.HttpUtility]::UrlEncode([string]$_.Key) + '=' + [Web.HttpUtility]::UrlEncode([string]$_.Value)
+    }) -join '&')
+}
+
+function Get-EntraRegistrationPageConfig {
+    param([Parameter(Mandatory)][string]$Content)
+    if ($Content -notmatch '(?s)\$Config\s*=\s*(\{.*?\});') { throw 'Registration page configuration is missing.' }
+    try { return ($matches[1] | ConvertFrom-Json -ErrorAction Stop) }
+    catch { throw 'Registration page configuration is invalid.' }
+}
+
+function Get-EntraRegistrationAuthorizationCode {
+    param([Parameter(Mandatory)][string]$Callback, [Parameter(Mandatory)][string]$ExpectedState)
+    $uri = Assert-EntraRegistrationUri $Callback
+    if ($uri.Host -ne 'mysignins.microsoft.com' -or $uri.AbsolutePath -ne '/') { throw 'Unexpected authorization callback.' }
+    $fields = [Web.HttpUtility]::ParseQueryString(($uri.Query.TrimStart('?') + '&' + $uri.Fragment.TrimStart('#')))
+    $states = @($fields.GetValues('state')); $codes = @($fields.GetValues('code'))
+    if ($states.Count -ne 1 -or $states[0] -cne $ExpectedState -or $codes.Count -ne 1 -or
+        [string]::IsNullOrWhiteSpace($codes[0]) -or $fields['error']) {
+        throw 'Missing, ambiguous or mismatched authorization response.'
+    }
+    return $codes[0]
+}
+
+function New-EntraRegistrationContext {
+    param([string]$RedirectUri = 'https://mysignins.microsoft.com', [string]$UserAgent)
+    if ($RedirectUri.TrimEnd('/') -cne 'https://mysignins.microsoft.com') { throw 'Registration RedirectUri must be https://mysignins.microsoft.com.' }
+    $session = [Microsoft.PowerShell.Commands.WebRequestSession]::new()
+    if ($UserAgent) { $session.UserAgent = $UserAgent }
+    $random = [byte[]]::new(32)
+    [Security.Cryptography.RandomNumberGenerator]::Fill($random)
+    $verifier = ConvertTo-Base64Url $random
+    [pscustomobject]@{
+        ClientId = '19db86c3-b2b9-44cc-b339-36da233a3be2'
+        RedirectUri = $RedirectUri.TrimEnd('/')
+        State = [guid]::NewGuid().ToString()
+        CodeVerifier = $verifier
+        CodeChallenge = ConvertTo-Base64Url ([Security.Cryptography.SHA256]::HashData([Text.Encoding]::ASCII.GetBytes($verifier)))
+        WebSession = $session
+        ClientSessionId = [guid]::NewGuid().ToString()
+        TenantId = $null; UserPrincipalName = $null; Token = $null; RefreshToken = $null; SessionCtxV2 = $null
+    }
+}
+
+function Get-EntraRegistrationHeaders {
+    param([Parameter(Mandatory)]$Context, [switch]$IncludeToken, [switch]$IncludeSession)
+    $headers = @{
+        Origin = $Context.RedirectUri; Referer = "$($Context.RedirectUri)/security-info"
+        AjaxRequest = 'true'; 'x-ms-mysignins-region' = 'westus2'
+        'x-ms-client-session-id' = $Context.ClientSessionId
+    }
+    if ($IncludeToken) { $headers.Authorization = "Bearer $($Context.Token)" }
+    if ($IncludeSession) { $headers.SessionCtxV2 = $Context.SessionCtxV2 }
+    if ($Context.WebSession -and $Context.WebSession.UserAgent) { $headers['User-Agent'] = $Context.WebSession.UserAgent }
+    Add-PasskeyBrowserHeaders -Headers $headers
+    return $headers
+}
+
+function Initialize-EntraRegistrationSession {
+    param([Parameter(Mandatory)]$Context)
+    $headers = Get-EntraRegistrationHeaders -Context $Context -IncludeToken
+    $response = Invoke-EntraRegistrationRestMethod -Uri "$($Context.RedirectUri)/api/session/authorize" `
+        -Method POST -Headers $headers -ContentType 'application/json' -Body '{}' -WebSession $Context.WebSession
+    if ($response.isAuthorized -ne $true -or [string]::IsNullOrWhiteSpace($response.sessionCtxV2)) {
+        throw 'My Sign-ins registration session was not authorized.'
+    }
+    if ($response.requireNgcMfaForSecurityInfo) {
+        $claims = '{"id_token":{"amr":{"essential":true,"values":["ngcmfa"]}},"access_token":{"amr":{"essential":true,"values":["ngcmfa"]}}}'
+        $body = ConvertTo-EntraRegistrationForm @{
+            client_id = $Context.ClientId; scope = "$($Context.ClientId)/.default openid"
+            grant_type = 'refresh_token'; refresh_token = $Context.RefreshToken; claims = $claims
+        }
+        $tokens = Invoke-EntraRegistrationRestMethod -Uri "https://login.microsoftonline.com/$($Context.TenantId)/oauth2/v2.0/token" `
+            -Method POST -Body $body -ContentType 'application/x-www-form-urlencoded' -Headers @{ Origin = $Context.RedirectUri }
+        $null = Assert-EntraRegistrationTokenBinding -Token $tokens.access_token -ClientId $Context.ClientId `
+            -TenantId $Context.TenantId -UserPrincipalName $Context.UserPrincipalName
+        $Context.Token = $tokens.access_token
+        if ($tokens.refresh_token) { $Context.RefreshToken = $tokens.refresh_token }
+        $headers.Authorization = "Bearer $($Context.Token)"
+        $response = Invoke-EntraRegistrationRestMethod -Uri "$($Context.RedirectUri)/api/session/authorize" `
+            -Method POST -Headers $headers -ContentType 'application/json' -Body '{}' -WebSession $Context.WebSession
+        if ($response.isAuthorized -ne $true -or [string]::IsNullOrWhiteSpace($response.sessionCtxV2)) {
+            throw 'My Sign-ins MFA registration session was not authorized.'
+        }
+    }
+    $Context.SessionCtxV2 = $response.sessionCtxV2
+    return $Context
+}
+# End source: powershell/src/Entra/SoftwareSession.ps1
+
+# Source: powershell/src/Entra/SoftwareAuthorization.ps1
+# Bounded OAuth continuation; only known KMSI pages are eligible for form submission.
+function Invoke-EntraRegistrationAuthorization {
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Uri,
+        [string]$Method = 'GET', [AllowNull()][string]$Body)
+    $current = $Uri
+    for ($step = 0; $step -lt 15; $step++) {
+        $request = @{ Uri = $current; Method = $Method; WebSession = $Context.WebSession }
+        if ($Method -eq 'POST') { $request.Body = $Body; $request.ContentType = 'application/x-www-form-urlencoded' }
+        $response = Invoke-EntraRegistrationWebRequest @request
+        $status = [int]$response.StatusCode
+        if ($status -in @(301, 302, 303, 307, 308)) {
+            $locations = @($response.Headers.Location)
+            if ($locations.Count -ne 1 -or [string]::IsNullOrWhiteSpace($locations[0])) { throw 'Missing or ambiguous registration redirect.' }
+            $next = [uri]::new([uri]$current, [string]$locations[0]).AbsoluteUri
+            $nextUri = Assert-EntraRegistrationUri $next
+            $fields = [Web.HttpUtility]::ParseQueryString($nextUri.Query.TrimStart('?') + '&' + $nextUri.Fragment.TrimStart('#'))
+            if ($fields['code'] -or $fields['error']) {
+                return Get-EntraRegistrationAuthorizationCode -Callback $next -ExpectedState $Context.State
+            }
+            # Do not forward a TAP/form through 307/308 or to another origin.
+            if ($status -in @(307, 308) -and $Method -eq 'POST') {
+                if ($nextUri.Host -ne ([uri]$current).Host) { throw 'Cross-origin registration form redirect refused.' }
+            } else { $Method = 'GET'; $Body = $null }
+            $current = $next
+            continue
+        }
+        if ($status -ne 200) { throw 'Registration authorization was not successful.' }
+        $config = Get-EntraRegistrationPageConfig -Content $response.Content
+        if ($config.pgid -notin @('KmsiBroker', 'KmsiInterrupt') -or $config.strServiceExceptionMessage) {
+            throw 'Unrecognized login continuation or consent interrupt; manual review required.'
+        }
+        $actions = [regex]::Matches($response.Content, '(?is)<form\b[^>]*\baction="([^"]+)"')
+        if ($actions.Count -ne 1) { throw 'Registration continuation form is missing or ambiguous.' }
+        $nextUri = Assert-EntraRegistrationUri ([uri]::new([uri]$current, [Web.HttpUtility]::HtmlDecode($actions[0].Groups[1].Value)).AbsoluteUri)
+        if ($nextUri.Host -ne 'login.microsoftonline.com') { throw 'Unexpected registration continuation destination.' }
+        $fields = [ordered]@{}
+        foreach ($input in [regex]::Matches($response.Content, '(?is)<input\b[^>]*>')) {
+            $tag = $input.Value
+            if ($tag -notmatch '\btype="hidden"' -or $tag -notmatch '\bname="([^"]+)"') { continue }
+            $name = [Web.HttpUtility]::HtmlDecode($matches[1])
+            if ($tag -notmatch '\bvalue="([^"]*)"') { throw 'Registration continuation field has no value.' }
+            if ($fields.Contains($name)) { throw 'Duplicate registration continuation field.' }
+            $fields[$name] = [Web.HttpUtility]::HtmlDecode($matches[1])
+        }
+        if (-not $fields.Count) { throw 'Registration continuation has no hidden fields.' }
+        $current = $nextUri.AbsoluteUri; $Method = 'POST'; $Body = ConvertTo-EntraRegistrationForm $fields
+    }
+    throw 'Registration authorization exceeded the redirect limit.'
+}
+
+function Assert-EntraRegistrationTokenBinding {
+    param([Parameter(Mandatory)][string]$Token, [Parameter(Mandatory)][string]$ClientId,
+        [AllowNull()][string]$TenantId, [AllowNull()][string]$UserPrincipalName)
+    # These transport-returned claims are consistency checks, not independent signature validation.
+    $parts = $Token.Split('.')
+    if ($parts.Count -ne 3) { throw 'Registration token is malformed.' }
+    try { $claims = [Text.Encoding]::UTF8.GetString((ConvertFrom-Base64Url $parts[1])) | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw 'Registration token claims are invalid.' }
+    $tenant = [guid]::Empty
+    if (-not [guid]::TryParse([string]$claims.tid, [ref]$tenant) -or $tenant -eq [guid]::Empty -or
+        [string]$claims.aud -cne $ClientId) { throw 'Registration token audience or tenant is not bound to the requested client.' }
+    foreach ($property in @('appid', 'azp')) {
+        $value = $claims.PSObject.Properties[$property]
+        if ($null -ne $value -and $value.Value -and [string]$value.Value -cne $ClientId) { throw 'Registration token application binding mismatch.' }
+    }
+    if ($TenantId -and $tenant -ne [guid]$TenantId) { throw 'Registration token tenant mismatch.' }
+    $upn = $claims.upn
+    if (-not $upn) { $upn = $claims.preferred_username }
+    if (-not $upn) { $upn = $claims.unique_name }
+    if ([string]$upn -notmatch '^[^\s@]+@[^\s@]+$' -or ($UserPrincipalName -and $upn -ine $UserPrincipalName)) {
+        throw 'Registration token user binding mismatch.'
+    }
+    if ($null -eq $claims.exp -or [long]$claims.exp -le [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) { throw 'Registration token has expired or has no expiry.' }
+    return [pscustomobject]@{ TenantId = $tenant.ToString(); UserPrincipalName = [string]$upn }
+}
+
+function Get-EntraRegistrationAuthorizeUri {
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Authority,
+        [AllowNull()][string]$UserPrincipalName, [switch]$Tap)
+    $query = [ordered]@{
+        client_id = $Context.ClientId; redirect_uri = $Context.RedirectUri
+        scope = "$($Context.ClientId)/.default openid profile offline_access"
+        response_type = 'code'; response_mode = 'fragment'; code_challenge = $Context.CodeChallenge
+        code_challenge_method = 'S256'; state = $Context.State
+    }
+    if ($Tap) { $query.prompt = 'login'; $query.login_hint = $UserPrincipalName }
+    else { $query.prompt = 'none' }
+    return "https://login.microsoftonline.com/$Authority/oauth2/v2.0/authorize?$(ConvertTo-EntraRegistrationForm $query)"
+}
+
+function Complete-EntraRegistrationTokenExchange {
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Authority,
+        [Parameter(Mandatory)][string]$Code, [AllowNull()][string]$TenantId, [AllowNull()][string]$UserPrincipalName)
+    $body = ConvertTo-EntraRegistrationForm @{
+        client_id = $Context.ClientId; redirect_uri = $Context.RedirectUri
+        scope = "$($Context.ClientId)/.default openid profile offline_access"
+        grant_type = 'authorization_code'; code = $Code; code_verifier = $Context.CodeVerifier
+        # Preserve the curated TAP bootstrap: request required MFA claims on the initial exchange.
+        claims = '{"id_token":{"amr":{"essential":true,"values":["ngcmfa"]}},"access_token":{"amr":{"essential":true,"values":["ngcmfa"]}}}'
+    }
+    $tokens = Invoke-EntraRegistrationRestMethod -Uri "https://login.microsoftonline.com/$Authority/oauth2/v2.0/token" `
+        -Method POST -Body $body -ContentType 'application/x-www-form-urlencoded' -Headers @{ Origin = $Context.RedirectUri }
+    if ([string]::IsNullOrWhiteSpace($tokens.refresh_token)) { throw 'Registration refresh token is missing.' }
+    $identity = Assert-EntraRegistrationTokenBinding -Token $tokens.access_token -ClientId $Context.ClientId `
+        -TenantId $TenantId -UserPrincipalName $UserPrincipalName
+    $Context.Token = $tokens.access_token; $Context.RefreshToken = $tokens.refresh_token
+    $Context.TenantId = $identity.TenantId; $Context.UserPrincipalName = $identity.UserPrincipalName
+    $Context.CodeVerifier = $null
+    return $Context
+}
+# End source: powershell/src/Entra/SoftwareAuthorization.ps1
+
+# Source: powershell/src/Entra/SoftwareAuthentication.ps1
+function Invoke-EntraRegistrationTapAuthentication {
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][object]$TAP,
+        [Parameter(Mandatory)][string]$UserPrincipalName, [Parameter(Mandatory)][guid]$TenantId)
+    if ($TenantId -eq [guid]::Empty -or $UserPrincipalName -notmatch '^[^\s@]+@[^\s@]+$') { throw 'A nonempty tenant GUID and UPN are required.' }
+    $tapText = ConvertTo-PlainTextValue $TAP
+    if ([string]::IsNullOrWhiteSpace($tapText)) { throw 'TAP cannot be empty.' }
+    try {
+        $uri = Get-EntraRegistrationAuthorizeUri -Context $Context -Authority $TenantId.ToString() -UserPrincipalName $UserPrincipalName -Tap
+        $response = Invoke-EntraRegistrationWebRequest -Uri $uri -WebSession $Context.WebSession
+        if ([int]$response.StatusCode -ne 200) { throw 'Registration sign-in page was not returned.' }
+        $config = Get-EntraRegistrationPageConfig -Content $response.Content
+        if ($config.pgid -ne 'ConvergedSignIn' -or -not $config.sFT -or -not $config.sCtx) { throw 'Unexpected registration sign-in page.' }
+        $gct = Invoke-EntraRegistrationRestMethod -Uri 'https://login.microsoftonline.com/common/GetCredentialType?mkt=en-US' `
+            -Method POST -Body (@{
+                username = $UserPrincipalName; isOtherIdpSupported = $false; checkPhones = $false
+                isRemoteNGCSupported = $true; isCookieBannerShown = $false; isFidoSupported = $true
+                originalRequest = $config.sCtx; flowToken = $config.sFT
+            } | ConvertTo-Json -Compress) -ContentType 'application/json' `
+            -Headers @{ canary = $config.apiCanary; hpgrequestid = $config.sessionId; hpgact = '1800'; hpgid = '1104' }
+        $flowToken = if ($gct.FlowToken) { $gct.FlowToken } else { $config.sFT }
+        $postUri = if ($config.urlPost) { [uri]::new([uri]'https://login.microsoftonline.com/', [string]$config.urlPost) } else { [uri]'https://login.microsoftonline.com/common/login' }
+        $null = Assert-EntraRegistrationUri $postUri.AbsoluteUri
+        if ($postUri.Host -ne 'login.microsoftonline.com') { throw 'Unexpected TAP sign-in destination.' }
+        $body = ConvertTo-EntraRegistrationForm @{
+            login = $UserPrincipalName; loginfmt = $UserPrincipalName; accesspass = $tapText; ps = '56'
+            psRNGCDefaultType = '1'; psRNGCEntropy = ''; psRNGCSLK = $flowToken
+            canary = $config.canary; ctx = $config.sCtx; hpgrequestid = $config.sessionId; flowToken = $flowToken
+            PPSX = ''; NewUser = '1'; FoundMSAs = ''; fspost = '0'; i21 = '0'; CookieDisclosure = '0'
+            IsFidoSupported = '1'; isSignupPost = '0'; DfpArtifact = ''; i19 = '10000'
+        }
+        $code = Invoke-EntraRegistrationAuthorization -Context $Context -Uri $postUri.AbsoluteUri -Method POST -Body $body
+        return Complete-EntraRegistrationTokenExchange -Context $Context -Authority $TenantId.ToString() -Code $code `
+            -TenantId $TenantId.ToString() -UserPrincipalName $UserPrincipalName
+    } finally { $tapText = $null; $body = $null }
+}
+
+function Invoke-EntraRegistrationCookieAuthentication {
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][object]$ESTSAuthCookie,
+        [AllowNull()][string]$TenantId)
+    $authority = 'organizations'
+    if ($TenantId) {
+        $tenant = [guid]::Empty
+        if (-not [guid]::TryParse($TenantId, [ref]$tenant) -or $tenant -eq [guid]::Empty) { throw 'TenantId must be a nonempty GUID.' }
+        $authority = $tenant.ToString()
+    }
+    $cookie = ConvertTo-PlainTextValue $ESTSAuthCookie
+    if ([string]::IsNullOrWhiteSpace($cookie) -or $cookie -match '[\r\n;]') { throw 'ESTS cookie value is empty or invalid.' }
+    try {
+        foreach ($name in @('ESTSAUTH', 'ESTSAUTHPERSISTENT')) {
+            $Context.WebSession.Cookies.Add([Net.Cookie]::new($name, $cookie, '/', '.login.microsoftonline.com'))
+        }
+        $uri = Get-EntraRegistrationAuthorizeUri -Context $Context -Authority $authority
+        $code = Invoke-EntraRegistrationAuthorization -Context $Context -Uri $uri
+        return Complete-EntraRegistrationTokenExchange -Context $Context -Authority $authority -Code $code -TenantId $TenantId
+    } finally { $cookie = $null }
+}
+
+function Clear-EntraRegistrationContext {
+    param([AllowNull()]$Context)
+    if ($null -ne $Context) {
+        foreach ($name in @('Token', 'RefreshToken', 'CodeVerifier', 'SessionCtxV2', 'WebSession')) { $Context.$name = $null }
+    }
+}
+# End source: powershell/src/Entra/SoftwareAuthentication.ps1
+
+# Source: powershell/src/KeyVault/Reference.ps1
+function Resolve-KeyVaultReference {
+    param(
+        [string]$VaultName,
+        [string]$KeyName,
+        [string]$KeyId
+    )
+
+    $resolvedVaultName = Normalize-OptionalString $VaultName
+    $resolvedKeyName = Normalize-OptionalString $KeyName
+    $resolvedKeyId = Normalize-OptionalString $KeyId
+
+    # Match the original text before URI normalization can hide escaped or dot segments.
+    # Public Azure only: sovereign-cloud vaults require a separately reviewed audience/host policy.
+    $referenceValue = if ($resolvedKeyId) { $resolvedKeyId } elseif ($resolvedKeyName -match '^https?://') { $resolvedKeyName } else { $null }
+    if ($referenceValue) {
+        if ($referenceValue -cnotmatch '^https://([a-zA-Z][a-zA-Z0-9-]{1,22}[a-zA-Z0-9])\.vault\.azure\.net(?::443)?/keys/([a-zA-Z0-9-]{1,127})(?:/([a-fA-F0-9]{32}))?$') {
+            throw 'Invalid Key Vault key reference: expected an HTTPS public-Azure vault key URL.'
+        }
+        $urlVault = $Matches[1]
+        $urlKey = $Matches[2]
+        $urlVersion = $Matches[3]
+        if (($resolvedVaultName -and $resolvedVaultName -ine $urlVault) -or
+            ($resolvedKeyName -and $resolvedKeyName -notmatch '^https?://' -and $resolvedKeyName -cne $urlKey) -or
+            ($resolvedKeyId -and $resolvedKeyName -match '^https?://' -and $resolvedKeyName -cne $resolvedKeyId)) {
+            throw 'Key Vault metadata conflicts with keyId. Refusing to change the registered signing key.'
+        }
+        $resolvedVaultName = $urlVault.ToLowerInvariant()
+        $resolvedKeyName = $urlKey
+        $resolvedKeyId = "https://$resolvedVaultName.vault.azure.net/keys/$resolvedKeyName"
+        if ($urlVersion) { $resolvedKeyId += "/$urlVersion" }
+    }
+    if ($resolvedVaultName -cnotmatch '^[a-zA-Z][a-zA-Z0-9-]{1,22}[a-zA-Z0-9]$' -or $resolvedVaultName -match '--' -or
+        $resolvedKeyName -cnotmatch '^[a-zA-Z0-9-]{1,127}$') {
+        throw 'Invalid or incomplete Key Vault vaultName/keyName.'
+    }
+    if (-not $resolvedKeyId) {
+        $resolvedKeyId = "https://$($resolvedVaultName.ToLowerInvariant()).vault.azure.net/keys/$resolvedKeyName"
+    }
+    return @{ vaultName = $resolvedVaultName; keyName = $resolvedKeyName; keyId = $resolvedKeyId }
+}
+# End source: powershell/src/KeyVault/Reference.ps1
+
+# Source: powershell/src/KeyVault/ProvisioningKeys.ps1
+function New-EntraKeyVaultRegistrationKey {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$VaultName,
+        [string]$KeyName,
+        [Parameter(Mandatory)][string]$UserPrincipalName,
+        [Parameter(Mandatory)][string]$AccessToken
+    )
+    if ([string]::IsNullOrWhiteSpace($KeyName)) {
+        $prefix = $UserPrincipalName.Split('@')[0] -replace '[^0-9A-Za-z-]', ''
+        if (-not $prefix) { $prefix = 'user' }
+        $prefix = $prefix.Substring(0, [Math]::Min(12, $prefix.Length))
+        $KeyName = "pk-$prefix-$(Get-Random -Minimum 100000 -Maximum 1000000)"
+    }
+    # Validate the host and path before transmitting the bearer token.
+    $reference = Resolve-KeyVaultReference -VaultName $VaultName -KeyName $KeyName
+    $body = @{ kty = 'EC'; crv = 'P-256'; key_ops = @('sign', 'verify') } | ConvertTo-Json
+    $response = Invoke-RestMethod -Uri "https://$($reference.vaultName).vault.azure.net/keys/$($reference.keyName)/create?api-version=7.4" `
+        -Method POST -Headers @{ Authorization = "Bearer $AccessToken" } -ContentType 'application/json' `
+        -Body $body -MaximumRedirection 0 -ConnectionTimeoutSeconds 60 -OperationTimeoutSeconds 60 -Verbose:$false -Debug:$false -ErrorAction Stop
+    $stored = Resolve-KeyVaultReference -VaultName $reference.vaultName -KeyName $reference.keyName -KeyId ([string]$response.key.kid)
+    if ([string]$response.key.kid -cnotmatch '/keys/[a-zA-Z0-9-]{1,127}/[a-fA-F0-9]{32}$') { throw 'Key Vault did not return a versioned key ID.' }
+    $x = [byte[]](ConvertFrom-Base64Url -Base64Url ([string]$response.key.x))
+    $y = [byte[]](ConvertFrom-Base64Url -Base64Url ([string]$response.key.y))
+    if ($response.key.kty -ne 'EC' -or $response.key.crv -ne 'P-256' -or $x.Length -ne 32 -or $y.Length -ne 32) {
+        throw 'Key Vault did not return an EC P-256 public key with 32-byte coordinates.'
+    }
+    [pscustomobject]@{ PublicX = $x; PublicY = $y; keyVault = $stored; AccessToken = $AccessToken }
+}
+# End source: powershell/src/KeyVault/ProvisioningKeys.ps1
+
+# Source: powershell/src/Local/RegistrationKey.ps1
+function New-SoftwarePasskeyKey {
+    # The returned key is caller-owned. Never return this object through ordinary logging.
+    $key = [Security.Cryptography.ECDsa]::Create([Security.Cryptography.ECCurve]::CreateFromValue('1.2.840.10045.3.1.7'))
+    try {
+        $public = $key.ExportParameters($false)
+        $privateBytes = $key.ExportPkcs8PrivateKey()
         try {
-            $kvToken = Get-ServicePrincipalToken @kvTokenParams
-        } catch {
-            $retryCount++
-            if ($_.Exception.Message -match "AADSTS7000215" -and $retryCount -lt $maxRetries) {
-                Start-Sleep -Seconds 5
-            } else {
-                throw
+            $pem = "-----BEGIN PRIVATE KEY-----`n$([Convert]::ToBase64String($privateBytes, [System.Base64FormattingOptions]::InsertLineBreaks))`n-----END PRIVATE KEY-----"
+        } finally { [Array]::Clear($privateBytes, 0, $privateBytes.Length) }
+        return [pscustomobject]@{ Key = $key; PublicX = [byte[]]$public.Q.X; PublicY = [byte[]]$public.Q.Y; PrivateKeyPem = $pem }
+    } catch { $key.Dispose(); throw }
+}
+
+function Clear-SoftwarePasskeyKey {
+    param([AllowNull()]$Provider)
+    if ($null -ne $Provider) {
+        if ($null -ne $Provider.Key) { $Provider.Key.Dispose(); $Provider.Key = $null }
+        $property = $Provider.PSObject.Properties['PrivateKeyPem']
+        if ($null -ne $property) { $Provider.PrivateKeyPem = $null }
+    }
+}
+# End source: powershell/src/Local/RegistrationKey.ps1
+
+# Source: powershell/src/Entra/SoftwareAttestation.ps1
+function New-EntraSoftwareAuthenticatorData {
+    param([Parameter(Mandatory)][string]$RpId, [Parameter(Mandatory)][byte[]]$CredentialId,
+        [Parameter(Mandatory)][byte[]]$PublicX, [Parameter(Mandatory)][byte[]]$PublicY, [byte]$Flags = 0x45)
+    if ($RpId -cne 'login.microsoft.com' -or $CredentialId.Length -ne 32 -or $PublicX.Length -ne 32 -or $PublicY.Length -ne 32) {
+        throw 'Software attestation requires the Entra RP and 32-byte P-256 coordinates/credential ID.'
+    }
+    $cose = [ordered]@{ [int]1 = [int]2; [int]3 = [int]-7; [int]-1 = [int]1; [int]-2 = $PublicX; [int]-3 = $PublicY }
+    $bytes = [Collections.Generic.List[byte]]::new()
+    $bytes.AddRange([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($RpId)))
+    $bytes.Add($Flags); $bytes.AddRange([byte[]]::new(4)); $bytes.AddRange([byte[]]::new(16))
+    $bytes.Add(0); $bytes.Add(32); $bytes.AddRange($CredentialId)
+    $bytes.AddRange([byte[]](New-CBOREncoded $cose))
+    return ,$bytes.ToArray()
+}
+
+function New-EntraSoftwareAttestation {
+    param([Parameter(Mandatory)]$Provider, [Parameter(Mandatory)][string]$Challenge,
+        [ValidateSet('None', 'LegacyPacked')][string]$Format = 'None', [switch]$AllowLegacySoftwareAttestation)
+    if ($Format -eq 'LegacyPacked' -and -not $AllowLegacySoftwareAttestation) {
+        throw 'Packed software attestation requires -AllowLegacySoftwareAttestation acknowledgement.'
+    }
+    $credentialBytes = [byte[]]::new(32)
+    [Security.Cryptography.RandomNumberGenerator]::Fill($credentialBytes)
+    $rpId = 'login.microsoft.com'
+    # Preserved research claims: these bits are synthetic and do not establish UP/UV assurance.
+    $flags = if ($Format -eq 'None') { [byte]0x5D } else { [byte]0x45 }
+    $authData = New-EntraSoftwareAuthenticatorData -RpId $rpId -CredentialId $credentialBytes `
+        -PublicX $Provider.PublicX -PublicY $Provider.PublicY -Flags $flags
+    if ($Format -eq 'LegacyPacked') { $Challenge = ConvertTo-Base64Url ([Text.Encoding]::UTF8.GetBytes($Challenge)) }
+    elseif ((Confirm-Base64Url $Challenge) -cne $Challenge -or (ConvertTo-Base64Url (ConvertFrom-Base64Url $Challenge)) -cne $Challenge) { throw 'Graph creation challenge is not canonical base64url.' }
+    $clientData = [ordered]@{ type = 'webauthn.create'; challenge = $Challenge; origin = "https://$rpId"; crossOrigin = $false } | ConvertTo-Json -Compress
+    $clientBytes = [Text.Encoding]::UTF8.GetBytes($clientData)
+    $statement = [ordered]@{}
+    $formatName = 'none'
+    if ($Format -eq 'LegacyPacked') {
+        $formatName = 'packed'
+        # This self-signed batch certificate is compatibility research, not trusted authenticator provenance.
+        $batch = [Security.Cryptography.ECDsa]::Create([Security.Cryptography.ECCurve]::CreateFromValue('1.2.840.10045.3.1.7'))
+        $certificate = $null
+        try {
+            $request = [Security.Cryptography.X509Certificates.CertificateRequest]::new(
+                'CN=Batch Certificate, OU=Authenticator Attestation, O=Chromium, C=US', $batch, [Security.Cryptography.HashAlgorithmName]::SHA256)
+            $certificate = $request.CreateSelfSigned([DateTimeOffset]::UtcNow.AddMinutes(-5), [DateTimeOffset]::UtcNow.AddYears(1))
+            [byte[]]$signed = $authData + [Security.Cryptography.SHA256]::HashData($clientBytes)
+            $signature = $batch.SignData($signed, [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence)
+            $statement = [ordered]@{ alg = [int]-7; sig = [byte[]]$signature; x5c = @(,[byte[]]$certificate.RawData) }
+        } finally { if ($null -ne $certificate) { $certificate.Dispose() }; $batch.Dispose() }
+    }
+    return [pscustomobject]@{
+        CredentialId = ConvertTo-Base64Url $credentialBytes
+        ClientDataJson = ConvertTo-Base64Url $clientBytes
+        AttestationObject = ConvertTo-Base64Url ([byte[]](New-CBOREncoded ([ordered]@{ fmt = $formatName; attStmt = $statement; authData = [byte[]]$authData })))
+        ClientExtensionResults = ConvertTo-Base64Url ([Text.Encoding]::UTF8.GetBytes('{"hmacCreateSecret":false}'))
+        RelyingParty = $rpId
+        Authenticator = 'cross-platform'; Transports = 'usb'; AAGuid = '00000000-0000-0000-0000-000000000000'
+    }
+}
+# End source: powershell/src/Entra/SoftwareAttestation.ps1
+
+# Source: powershell/src/Entra/SoftwareCredential.ps1
+function New-EntraSoftwareCredentialRecord {
+    param([Parameter(Mandatory)]$Provider, [Parameter(Mandatory)]$Attestation,
+        [Parameter(Mandatory)][string]$UserHandle, [Parameter(Mandatory)][string]$UserPrincipalName,
+        [Parameter(Mandatory)][string]$DisplayName)
+    if ((Confirm-Base64Url $UserHandle) -cne $UserHandle -or (ConvertTo-Base64Url (ConvertFrom-Base64Url $UserHandle)) -cne $UserHandle) { throw 'Registration user handle is not canonical base64url.' }
+    $record = [ordered]@{
+        credentialId = $Attestation.CredentialId; userHandle = $UserHandle; userName = $UserPrincipalName
+        relyingParty = $Attestation.RelyingParty; url = "https://$($Attestation.RelyingParty)"
+        signCount = 0; displayName = $DisplayName; createdDateTime = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+    if ($Provider.PSObject.Properties['PrivateKeyPem']) { $record.privateKey = $Provider.PrivateKeyPem }
+    elseif ($Provider.PSObject.Properties['keyVault']) { $record.keyVault = $Provider.keyVault }
+    else { throw 'Registration provider cannot serialize a key reference.' }
+    return $record
+}
+# End source: powershell/src/Entra/SoftwareCredential.ps1
+
+# Source: powershell/src/Entra/SoftwareOutput.ps1
+function Resolve-EntraSoftwareOutputPath {
+    param([AllowNull()][string]$OutputPath, [Parameter(Mandatory)][string]$UserPrincipalName,
+        [Parameter(Mandatory)][string]$DisplayName)
+    $name = ($UserPrincipalName.Split('@')[0] + '_' + $DisplayName + '_credential.json') -replace '[^A-Za-z0-9_.-]', '_'
+    if (-not $OutputPath) { return [IO.Path]::GetFullPath($name) }
+    if ([IO.Directory]::Exists($OutputPath)) { $OutputPath = [IO.Path]::Combine($OutputPath, $name) }
+    return [IO.Path]::GetFullPath($OutputPath)
+}
+
+function Open-EntraSoftwareCredentialOutput {
+    param([Parameter(Mandatory)][string]$OutputPath)
+    # Reserve before registration. Never silently overwrite a credential, including in pipeline mode.
+    $parent = [IO.Path]::GetDirectoryName($OutputPath)
+    if (-not [IO.Directory]::Exists($parent)) { throw 'Credential output directory does not exist.' }
+    try {
+        if ($IsWindows) {
+            $stream = [IO.File]::Open($OutputPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        } else {
+            $options = [IO.FileStreamOptions]::new()
+            $options.Mode = [IO.FileMode]::CreateNew; $options.Access = [IO.FileAccess]::Write; $options.Share = [IO.FileShare]::None
+            $options.UnixCreateMode = [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite
+            $stream = [IO.FileStream]::new($OutputPath, $options)
+        }
+        return $stream
+    } catch { throw 'Credential output could not be reserved. Select a new writable private path; existing files are never overwritten.' }
+}
+
+function Write-EntraSoftwareCredentialOutput {
+    param([Parameter(Mandatory)][IO.Stream]$Stream, [Parameter(Mandatory)]$Credential)
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($Credential | ConvertTo-Json -Depth 8))
+    try { $Stream.Write($bytes, 0, $bytes.Length); $Stream.Flush() }
+    finally { [Array]::Clear($bytes, 0, $bytes.Length) }
+}
+# End source: powershell/src/Entra/SoftwareOutput.ps1
+
+# Source: powershell/src/Entra/SoftwareGraphAuthentication.ps1
+function Resolve-EntraSoftwareGraphTenant {
+    param([AllowNull()][string]$TenantId, [Parameter(Mandatory)][string]$UserUpn, [switch]$UseManagedIdentity)
+    if ($UseManagedIdentity) { return $TenantId }
+    if ($TenantId) {
+        $tenant = [guid]::Empty
+        if (-not [guid]::TryParse($TenantId, [ref]$tenant) -or $tenant -eq [guid]::Empty) { throw 'TenantId must be a nonempty GUID.' }
+        return $tenant.ToString()
+    }
+    $domain = [uri]::EscapeDataString($UserUpn.Split('@')[1])
+    $metadata = Invoke-EntraRegistrationRestMethod -Uri "https://login.microsoftonline.com/$domain/v2.0/.well-known/openid-configuration"
+    # Microsoft OIDC v2 metadata: https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc
+    $issuer = Assert-EntraRegistrationUri ([string]$metadata.issuer)
+    $tenant = [guid]::Empty
+    if (-not [guid]::TryParse($issuer.AbsolutePath.Trim('/').Split('/')[0], [ref]$tenant) -or $tenant -eq [guid]::Empty) {
+        throw 'Tenant discovery did not return a tenant GUID.'
+    }
+    if ($issuer.Host -ne 'login.microsoftonline.com' -or $issuer.AbsolutePath.Trim('/') -cne "$($tenant.ToString())/v2.0") { throw 'Unexpected tenant discovery issuer.' }
+    return $tenant.ToString()
+}
+
+function Get-EntraSoftwareManagedIdentityToken {
+    param([Parameter(Mandatory)][string]$Scope)
+    $resource = $Scope -replace '/\.default$', ''
+    try {
+        # Runtime-only reads. Import never inspects identity endpoints or environment credentials.
+        if ($env:IDENTITY_ENDPOINT -and $env:IDENTITY_HEADER) {
+            $uri = [uri]$env:IDENTITY_ENDPOINT
+            if ($uri.Host -notin @('127.0.0.1', 'localhost') -or $uri.UserInfo) { throw 'Unexpected managed identity endpoint.' }
+            $response = Invoke-RestMethod -Uri "$($uri.AbsoluteUri)?api-version=2019-08-01&resource=$([uri]::EscapeDataString($resource))" `
+                -Headers @{ 'X-IDENTITY-HEADER' = $env:IDENTITY_HEADER } -ConnectionTimeoutSeconds 30 -OperationTimeoutSeconds 30 -MaximumRedirection 0 -Verbose:$false -Debug:$false -ErrorAction Stop
+        } else {
+            $response = Invoke-RestMethod -Uri "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2019-08-01&resource=$([uri]::EscapeDataString($resource))" `
+                -Headers @{ Metadata = 'true' } -ConnectionTimeoutSeconds 30 -OperationTimeoutSeconds 30 -MaximumRedirection 0 -Verbose:$false -Debug:$false -ErrorAction Stop
+        }
+        if ([string]::IsNullOrWhiteSpace($response.access_token)) { throw 'Missing token.' }
+        return [string]$response.access_token
+    } catch { throw 'Managed identity token acquisition failed; sensitive response details suppressed.' }
+}
+
+function New-EntraSoftwareCertificateAssertion {
+    param([Parameter(Mandatory)][string]$TokenUri, [Parameter(Mandatory)][string]$ClientId,
+        [Parameter(Mandatory)][string]$CertificatePath, [AllowNull()][securestring]$CertificatePassword)
+    $certificate = $null; $rsa = $null; $password = $null
+    try {
+        $password = if ($CertificatePassword) { ConvertTo-PlainTextValue $CertificatePassword } else { '' }
+        $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new($CertificatePath, $password,
+            [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
+        $now = [DateTimeOffset]::UtcNow
+        if (-not $certificate.HasPrivateKey -or $certificate.NotBefore.ToUniversalTime() -gt $now.UtcDateTime -or
+            $certificate.NotAfter.ToUniversalTime() -le $now.UtcDateTime) { throw 'Invalid certificate validity or missing private key.' }
+        $header = @{ alg = 'RS256'; typ = 'JWT'; x5t = ConvertTo-Base64Url ($certificate.GetCertHash()) } | ConvertTo-Json -Compress
+        $payload = @{ aud = $TokenUri; iss = $ClientId; sub = $ClientId; jti = [guid]::NewGuid().ToString()
+            nbf = $now.ToUnixTimeSeconds(); exp = $now.AddMinutes(10).ToUnixTimeSeconds() } | ConvertTo-Json -Compress
+        $unsigned = (ConvertTo-Base64Url ([Text.Encoding]::UTF8.GetBytes($header))) + '.' + (ConvertTo-Base64Url ([Text.Encoding]::UTF8.GetBytes($payload)))
+        $rsa = [Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($certificate)
+        if ($null -eq $rsa) { throw 'An RSA client certificate is required.' }
+        $signature = $rsa.SignData([Text.Encoding]::UTF8.GetBytes($unsigned), [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.RSASignaturePadding]::Pkcs1)
+        return $unsigned + '.' + (ConvertTo-Base64Url $signature)
+    } catch { throw 'Client certificate assertion failed; sensitive details suppressed.' }
+    finally { if ($null -ne $rsa) { $rsa.Dispose() }; if ($null -ne $certificate) { $certificate.Dispose() }; $password = $null }
+}
+
+function Get-EntraSoftwareApplicationToken {
+    param([Parameter(Mandatory)][string]$Scope, [AllowNull()][string]$TenantId,
+        [AllowNull()][string]$ClientId, [AllowNull()][securestring]$ClientSecret,
+        [AllowNull()][string]$ClientCertificatePath, [AllowNull()][securestring]$ClientCertificatePassword,
+        [switch]$UseManagedIdentity)
+    if ($UseManagedIdentity) { return Get-EntraSoftwareManagedIdentityToken -Scope $Scope }
+    $uri = "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/token"
+    $secret = $null; $body = @{ client_id = $ClientId; scope = $Scope; grant_type = 'client_credentials' }
+    try {
+        if ($ClientSecret) {
+            $secret = ConvertTo-PlainTextValue $ClientSecret
+            if ([string]::IsNullOrWhiteSpace($secret) -or $secret -match '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$') {
+                throw 'ClientSecret must contain the secret value, not its identifier.'
+            }
+            $body.client_secret = $secret
+        } elseif ($ClientCertificatePath) {
+            $body.client_assertion_type = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+            $body.client_assertion = New-EntraSoftwareCertificateAssertion -TokenUri $uri -ClientId $ClientId `
+                -CertificatePath $ClientCertificatePath -CertificatePassword $ClientCertificatePassword
+        } else { throw 'Application authentication requires a secret or certificate.' }
+        $response = Invoke-EntraRegistrationRestMethod -Uri $uri -Method POST -Body (ConvertTo-EntraRegistrationForm $body) -ContentType 'application/x-www-form-urlencoded'
+        if ([string]::IsNullOrWhiteSpace($response.access_token)) { throw 'Missing token.' }
+        return [string]$response.access_token
+    } catch { throw 'Application token acquisition failed; sensitive response details suppressed.' }
+    finally { $secret = $null; $body = $null }
+}
+# End source: powershell/src/Entra/SoftwareGraphAuthentication.ps1
+
+# Source: powershell/src/Entra/SoftwareGraphRegistration.ps1
+function Get-EntraSoftwareGraphCreationOptions {
+    param([Parameter(Mandatory)][string]$UserUpn, [Parameter(Mandatory)][string]$AccessToken)
+    $user = [uri]::EscapeDataString($UserUpn)
+    $response = Invoke-RestMethod -Uri "https://graph.microsoft.com/beta/users/$user/authentication/fido2Methods/creationOptions(challengeTimeoutInMinutes=10)" `
+        -Headers @{ Authorization = "Bearer $AccessToken" } -MaximumRedirection 0 -ConnectionTimeoutSeconds 60 -OperationTimeoutSeconds 60 -Verbose:$false -Debug:$false -ErrorAction Stop
+    if ($response.publicKey.rp.id -cne 'login.microsoft.com' -or $response.publicKey.user.name -ine $UserUpn) {
+        throw 'Graph creation options did not bind the requested user and relying party.'
+    }
+    foreach ($value in @($response.publicKey.challenge, $response.publicKey.user.id)) {
+        $normalized = Confirm-Base64Url ([string]$value)
+        if ($normalized -cne $value -or (ConvertTo-Base64Url (ConvertFrom-Base64Url $normalized)) -cne $value) {
+            throw 'Graph creation options contain noncanonical challenge or user handle.'
+        }
+    }
+    $algorithms = @($response.publicKey.pubKeyCredParams.alg)
+    if ($algorithms.Count -gt 0 -and $algorithms -notcontains -7) { throw 'Graph creation options do not permit ES256.' }
+    return $response.publicKey
+}
+
+function Submit-EntraSoftwareGraphRegistration {
+    param([Parameter(Mandatory)][string]$UserUpn, [Parameter(Mandatory)][string]$AccessToken,
+        [Parameter(Mandatory)][string]$DisplayName, [Parameter(Mandatory)]$Attestation)
+    $user = [uri]::EscapeDataString($UserUpn)
+    $body = @{ displayName = $DisplayName; publicKeyCredential = @{
+        id = $Attestation.CredentialId; response = @{ clientDataJSON = $Attestation.ClientDataJson; attestationObject = $Attestation.AttestationObject }
+    } } | ConvertTo-Json -Depth 6 -Compress
+    $response = Invoke-RestMethod -Uri "https://graph.microsoft.com/beta/users/$user/authentication/fido2Methods" `
+        -Method POST -Headers @{ Authorization = "Bearer $AccessToken" } -Body $body -ContentType 'application/json; charset=utf-8' `
+        -MaximumRedirection 0 -ConnectionTimeoutSeconds 60 -OperationTimeoutSeconds 60 -Verbose:$false -Debug:$false -ErrorAction Stop
+    if ([string]::IsNullOrWhiteSpace([string]$response.id) -or $response.displayName -cne $DisplayName) {
+        throw 'Graph did not confirm the submitted method.'
+    }
+    return $response
+}
+
+function Invoke-EntraSoftwareGraphRegistration {
+    param([Parameter(Mandatory)][string]$UserUpn, [Parameter(Mandatory)][string]$DisplayName,
+        [Parameter(Mandatory)][hashtable]$Authentication, [switch]$UseKeyVault, [string]$KeyVaultName)
+    $provider = $null; $graphToken = $null; $vaultToken = $null
+    try {
+        $tenant = Resolve-EntraSoftwareGraphTenant -TenantId $Authentication.TenantId -UserUpn $UserUpn -UseManagedIdentity:$Authentication.UseManagedIdentity
+        $Authentication.TenantId = $tenant
+        $graphToken = Get-EntraSoftwareApplicationToken -Scope 'https://graph.microsoft.com/.default' @Authentication
+        $options = Get-EntraSoftwareGraphCreationOptions -UserUpn $UserUpn -AccessToken $graphToken
+        if ($UseKeyVault) {
+            $vaultToken = Get-EntraSoftwareApplicationToken -Scope 'https://vault.azure.net/.default' @Authentication
+            $provider = New-EntraKeyVaultRegistrationKey -VaultName $KeyVaultName -UserPrincipalName $UserUpn -AccessToken $vaultToken
+        } else { $provider = New-SoftwarePasskeyKey }
+        $attestation = New-EntraSoftwareAttestation -Provider $provider -Challenge $options.challenge -Format None
+        $method = Submit-EntraSoftwareGraphRegistration -UserUpn $UserUpn -AccessToken $graphToken -DisplayName $DisplayName -Attestation $attestation
+        $record = New-EntraSoftwareCredentialRecord -Provider $provider -Attestation $attestation -UserHandle $options.user.id -UserPrincipalName $options.user.name -DisplayName $DisplayName
+        return [pscustomobject]@{ Credential = $record; Method = $method; TenantId = $tenant; UserPrincipalName = $UserUpn }
+    } finally {
+        if ($null -ne $provider -and $provider.PSObject.Properties['Key']) { Clear-SoftwarePasskeyKey $provider }
+        if ($null -ne $provider -and $provider.PSObject.Properties['AccessToken']) { $provider.AccessToken = $null }
+        $graphToken = $null; $vaultToken = $null
+    }
+}
+# End source: powershell/src/Entra/SoftwareGraphRegistration.ps1
+
+# Source: powershell/src/Entra/SoftwareConfiguration.ps1
+function Resolve-EntraSoftwareConfiguration {
+    param([Parameter(Mandatory)][hashtable]$Parameters, [AllowNull()]$ConfigFromPipeline,
+        [Parameter(Mandatory)][string]$ParameterSetName)
+    $configuration = @{} + $Parameters
+    if ($null -ne $ConfigFromPipeline) {
+        foreach ($mapping in @(@('ClientId', 'ApplicationId'), @('ClientSecret', 'ClientSecret'), @('TenantId', 'TenantId'), @('KeyVaultName', 'KeyVaultName'))) {
+            if (-not $configuration[$mapping[0]] -and $ConfigFromPipeline.($mapping[1])) {
+                $configuration[$mapping[0]] = $ConfigFromPipeline.($mapping[1])
             }
         }
+        if (-not $configuration.UseKeyVault -and $ConfigFromPipeline.UseKeyVault) { $configuration.UseKeyVault = $true }
     }
-    Write-Host "  ✓ Tokens acquired (Graph + Key Vault)" -ForegroundColor Green
-} else {
-    # Get token for Graph API only
-    $graphTokenParams = Get-TokenParameters -Scope "https://graph.microsoft.com/.default" `
-        -ResolvedTenantId $resolvedTenantId -ClientId $ClientId -ClientSecret $ClientSecret `
-        -ClientCertificatePath $ClientCertificatePath -ClientCertificatePassword $ClientCertificatePassword `
-        -ParameterSetName $PSCmdlet.ParameterSetName -UseManagedIdentity:$UseManagedIdentity
-    
-    $graphToken = Get-ServicePrincipalToken @graphTokenParams
-    Write-Host "  ✓ Token acquired (Graph)" -ForegroundColor Green
+    if ($configuration.ClientSecret -and $configuration.ClientSecret -isnot [securestring]) {
+        $configuration.ClientSecret = ConvertTo-SecureString ([string]$configuration.ClientSecret) -AsPlainText -Force
+    }
+    if ($configuration.UserUpn -notmatch '^[^\s@]+@[^\s@]+$') { throw 'UserUpn must be a UPN without whitespace.' }
+    if (-not $configuration.UseManagedIdentity) {
+        $client = [guid]::Empty
+        if (-not [guid]::TryParse([string]$configuration.ClientId, [ref]$client) -or $client -eq [guid]::Empty) { throw 'ClientId must be a nonempty application GUID.' }
+        if ($ParameterSetName -eq 'Certificate') {
+            if (-not $configuration.ClientCertificatePath) { throw 'ClientCertificatePath is required.' }
+        } elseif (-not $configuration.ClientSecret) { throw 'ClientSecret is required.' }
+    }
+    if ($configuration.TenantId) {
+        $tenant = [guid]::Empty
+        if (-not [guid]::TryParse([string]$configuration.TenantId, [ref]$tenant) -or $tenant -eq [guid]::Empty) { throw 'TenantId must be a nonempty GUID.' }
+    }
+    if ($configuration.UseKeyVault -and $configuration.KeyVaultName -notmatch '^[A-Za-z][A-Za-z0-9-]{1,22}[A-Za-z0-9]$') { throw 'UseKeyVault requires a valid KeyVaultName.' }
+    return $configuration
 }
 
-$headers = @{ "Authorization" = "Bearer $graphToken" }
-
-Write-Host "`n=== Retrieving creation options ===" -ForegroundColor Cyan
-$creationOptionsUri = "https://graph.microsoft.com/beta/users/$UserUpn/authentication/fido2Methods/creationOptions(challengeTimeoutInMinutes=10)"
-
-try {
-    $creationOptions = Invoke-RestMethod -Method GET -Uri $creationOptionsUri -Headers $headers
-} catch {
-    $statusCode = $_.Exception.Response.StatusCode.value__
-    $errorMessage = if ($_.ErrorDetails.Message) { ($_.ErrorDetails.Message | ConvertFrom-Json).error.message } else { $_.Exception.Message }
-    
-    if ($statusCode -eq 401) {
-        throw "Permission denied (401). Check service principal has UserAuthenticationMethod.ReadWrite.All with admin consent."
-    } elseif ($statusCode -eq 403) {
-        throw "Forbidden (403). Verify Graph API permissions and attestation enforcement is disabled."
-    } elseif ($statusCode -eq 404) {
-        throw "User not found (404): $UserUpn"
-    } else {
-        throw "Failed to retrieve creation options (HTTP $statusCode): $errorMessage"
+function Get-EntraSoftwareAuthenticationParameters {
+    param([Parameter(Mandatory)][hashtable]$Configuration)
+    return @{
+        TenantId = $Configuration.TenantId; ClientId = $Configuration.ClientId; ClientSecret = $Configuration.ClientSecret
+        ClientCertificatePath = $Configuration.ClientCertificatePath; ClientCertificatePassword = $Configuration.ClientCertificatePassword
+        UseManagedIdentity = [bool]$Configuration.UseManagedIdentity
     }
 }
+# End source: powershell/src/Entra/SoftwareConfiguration.ps1
 
-$challenge = $creationOptions.publicKey.challenge
-$rpId = $creationOptions.publicKey.rp.id
-$userId = $creationOptions.publicKey.user.id
-$userName = $creationOptions.publicKey.user.name
-
-Write-Host "  ✓ Challenge received for $userName" -ForegroundColor Green
-
-Write-Host "`n=== Generating key pair ===" -ForegroundColor Cyan
-
-if ($UseKeyVault) {
-    # Ensure we have a Key Vault token
-    if (-not $kvToken) {
-        Write-Host "  Key Vault token not found, acquiring..." -ForegroundColor Yellow
-        
-        $kvTokenParams = Get-TokenParameters -Scope "https://vault.azure.net/.default" `
-            -ResolvedTenantId $resolvedTenantId -ClientId $ClientId -ClientSecret $ClientSecret `
-            -ClientCertificatePath $ClientCertificatePath -ClientCertificatePassword $ClientCertificatePassword `
-            -ParameterSetName $PSCmdlet.ParameterSetName -UseManagedIdentity:$UseManagedIdentity
-        
+# Source: powershell/src/Public/RegisterSoftwarePasskey.ps1
+function Register-EntraSoftwarePasskey {
+    <# .SYNOPSIS
+    Register a research software passkey using Graph application permissions and none attestation.
+    .DESCRIPTION
+    Supports local P-256 keys or a Key Vault reference. Synthesized UP/UV flags do not
+    establish fresh human presence, verification or trusted authenticator assurance.
+    The private-key output is reserved before registration and never silently overwritten.
+    WhatIf performs local parameter validation only. Explicit PassThru forwards application configuration
+    with ClientSecret kept as SecureString, never plaintext.
+    Unix output is created mode 0600; Windows inherits directory ACLs and requires a private output directory.
+    #>
+    [CmdletBinding(DefaultParameterSetName = 'ClientSecret', SupportsShouldProcess, ConfirmImpact = 'High')]
+    param([Parameter(ValueFromPipeline)][pscustomobject]$ConfigFromPipeline,
+        [Parameter(Mandatory)][string]$UserUpn, [ValidateLength(1,100)][string]$DisplayName = 'Software Passkey',
+        [Parameter(ParameterSetName = 'ClientSecret')][Parameter(ParameterSetName = 'Certificate')][string]$ClientId,
+        [Parameter(ParameterSetName = 'ClientSecret')][securestring]$ClientSecret,
+        [Parameter(ParameterSetName = 'Certificate')][string]$ClientCertificatePath,
+        [Parameter(ParameterSetName = 'Certificate')][securestring]$ClientCertificatePassword,
+        [Parameter(ParameterSetName = 'ManagedIdentity')][switch]$UseManagedIdentity,
+        [string]$OutputPath, [switch]$UseKeyVault, [string]$KeyVaultName, [string]$TenantId, [switch]$PassThru)
+    process {
+        $configuration = Resolve-EntraSoftwareConfiguration -Parameters (@{} + $PSBoundParameters) `
+            -ConfigFromPipeline $ConfigFromPipeline -ParameterSetName $PSCmdlet.ParameterSetName
+        # Defaults absent from PSBoundParameters are still explicit workflow inputs.
+        $configuration.DisplayName = $DisplayName
+        if (-not $PSCmdlet.ShouldProcess($UserUpn, "Register software passkey '$DisplayName' and save its credential record")) { return }
+        $path = Resolve-EntraSoftwareOutputPath -OutputPath $OutputPath -UserPrincipalName $UserUpn -DisplayName $DisplayName
+        $stream = $null; $result = $null; $saved = $false
         try {
-            $kvToken = Get-ServicePrincipalToken @kvTokenParams
-            Write-Host "  ✓ Key Vault token acquired" -ForegroundColor Green
+            $stream = Open-EntraSoftwareCredentialOutput -OutputPath $path
+            $result = Invoke-EntraSoftwareGraphRegistration -UserUpn $UserUpn -DisplayName $DisplayName `
+                -Authentication (Get-EntraSoftwareAuthenticationParameters $configuration) `
+                -UseKeyVault:$configuration.UseKeyVault -KeyVaultName $configuration.KeyVaultName
+            Write-EntraSoftwareCredentialOutput -Stream $stream -Credential $result.Credential
+            $saved = $true
+            if ($PassThru) {
+                $output = [pscustomobject]@{ CredentialFilePath = $path; UserUpn = $UserUpn; DisplayName = $DisplayName
+                    TenantId = $result.TenantId; UsesKeyVault = [bool]$configuration.UseKeyVault
+                    KeyVaultName = $configuration.KeyVaultName; ClientId = $configuration.ClientId
+                    KeyName = if ($configuration.UseKeyVault) { $result.Credential.keyVault.keyName } else { $null }
+                    MethodId = $result.Method.id; RegistrationTime = [DateTimeOffset]::UtcNow }
+                if ($configuration.ClientSecret) {
+                    $output | Add-Member -NotePropertyName ClientSecret -NotePropertyValue $configuration.ClientSecret
+                }
+                $output
+            } else { [pscustomobject]@{ CredentialFilePath = $path; MethodId = $result.Method.id; Success = $true } }
         } catch {
-            Write-Error "Failed to acquire Key Vault token: $_"
-            Write-Host "  → Ensure the service principal has 'Key Vault Crypto Officer' role on the Key Vault" -ForegroundColor Yellow
-            throw
-        }
-    }
-    
-    # Create key in Key Vault
-    $keyName = "passkey-$($UserUpn.Split('@')[0])-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-    Write-Host "  Creating key in Key Vault: $keyName" -ForegroundColor Gray
-    
-    $kvKey = New-KeyVaultKey -KeyVaultName $KeyVaultName -KeyName $keyName -AccessToken $kvToken
-    
-    # Extract X and Y coordinates from Key Vault response (base64url encoded)
-    $publicKeyXB64Url = $kvKey.key.x
-    $publicKeyYB64Url = $kvKey.key.y
-    
-    # Convert from base64url to bytes
-    $publicKeyX = ConvertFrom-Base64Url $publicKeyXB64Url
-    $publicKeyY = ConvertFrom-Base64Url $publicKeyYB64Url
-    
-    Write-Host "  ✓ Key created in Key Vault (private key secured in HSM for Premium SKU)" -ForegroundColor Green
-    Write-Host "  Key ID: $($kvKey.key.kid)" -ForegroundColor Gray
-    
-    $ecDsa = $null  # No local key object when using Key Vault
-} else {
-    # Generate key locally
-    $ecDsa = [System.Security.Cryptography.ECDsa]::Create()
-    $ecDsa.KeySize = 256
-    $ecParams = $ecDsa.ExportParameters($true)
-    
-    $publicKeyX = $ecParams.Q.X
-    $publicKeyY = $ecParams.Q.Y
-    
-    Write-Host "  ✓ Key pair generated locally" -ForegroundColor Green
-}
-
-$credentialIdBytes = [byte[]]::new(32)
-[System.Security.Cryptography.RandomNumberGenerator]::Fill($credentialIdBytes)
-$credentialIdB64Url = ConvertTo-Base64Url $credentialIdBytes
-
-Write-Host "`n=== Building WebAuthn response ===" -ForegroundColor Cyan
-
-$clientData = @{
-    type      = "webauthn.create"
-    challenge = $challenge
-    origin    = "https://login.microsoft.com"
-} | ConvertTo-Json -Compress
-
-$clientDataBytes = [System.Text.Encoding]::UTF8.GetBytes($clientData)
-$clientDataB64Url = ConvertTo-Base64Url $clientDataBytes
-
-$sha256 = [System.Security.Cryptography.SHA256]::Create()
-$rpIdHash = $sha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($rpId))
-
-$authData = New-AuthenticatorData -RpIdHash $rpIdHash -CredentialId $credentialIdBytes -PublicKeyX $publicKeyX -PublicKeyY $publicKeyY
-$attestationObjectBytes = New-AttestationObject -AuthData $authData
-$attestationObjectB64Url = ConvertTo-Base64Url $attestationObjectBytes
-
-Write-Host "  ✓ WebAuthn response built" -ForegroundColor Green
-
-Write-Host "`n=== Registering passkey ===" -ForegroundColor Cyan
-
-$registrationBody = @{
-    displayName         = $DisplayName
-    publicKeyCredential = @{
-        id       = $credentialIdB64Url
-        response = @{
-            clientDataJSON    = $clientDataB64Url
-            attestationObject = $attestationObjectB64Url
-        }
-    }
-} | ConvertTo-Json -Depth 10
-
-$registerUri = "https://graph.microsoft.com/beta/users/$UserUpn/authentication/fido2Methods"
-
-if ($PSCmdlet.ShouldProcess("$UserUpn", "Register passkey '$DisplayName'")) {
-    try {
-        $registerResponse = Invoke-RestMethod -Method POST -Uri $registerUri -Headers $headers -Body $registrationBody -ContentType "application/json; charset=utf-8"
-        Write-Host "  ✓ Passkey registered successfully!" -ForegroundColor Green
-        Write-Host "    Method ID: $($registerResponse.id)" -ForegroundColor Gray
-        Write-Host "    Display Name: $($registerResponse.displayName)" -ForegroundColor Gray
-        Write-Host "    Created: $($registerResponse.createdDateTime)" -ForegroundColor Gray
-    } catch {
-        $statusCode = $_.Exception.Response.StatusCode.value__
-        $errorMessage = if ($_.ErrorDetails.Message) { 
-            try { ($_.ErrorDetails.Message | ConvertFrom-Json).error.message } catch { $_.ErrorDetails.Message }
-        } else { 
-            $_.Exception.Message 
-        }
-        
-        Write-Error "Failed to register passkey (HTTP $statusCode): $errorMessage"
-        
-        if ($statusCode -eq 400) {
-            Write-Host "  → Check that attestation enforcement is disabled in Entra ID FIDO2 settings" -ForegroundColor Yellow
-            Write-Host "  → Verify the authenticator data and attestation object are correctly formatted" -ForegroundColor Yellow
-        } elseif ($statusCode -eq 409) {
-            Write-Host "  → A passkey with this credential ID may already exist" -ForegroundColor Yellow
-        }
-        throw
-    }
-} else {
-    Write-Host "  WhatIf: Would register passkey '$DisplayName' for user $UserUpn" -ForegroundColor Yellow
-    return
-}
-
-Write-Host "`n=== Saving credential ===" -ForegroundColor Cyan
-
-if (-not $OutputPath) {
-    $OutputPath = Join-Path (Get-Location) "$($UserUpn.Split('@')[0])_$($DisplayName.Replace(' ', '_'))_credential.json"
-} elseif (Test-Path $OutputPath -PathType Container) {
-    # If OutputPath is a directory, append default filename
-    $OutputPath = Join-Path $OutputPath "$($UserUpn.Split('@')[0])_$($DisplayName.Replace(' ', '_'))_credential.json"
-}
-
-# Check if file already exists and warn user
-if (Test-Path $OutputPath -PathType Leaf) {
-    if ($PassThru) {
-        # Auto-overwrite in pipeline mode to avoid blocking
-        Write-Verbose "Auto-overwriting existing file in pipeline mode: $OutputPath"
-    } else {
-        Write-Warning "Output file already exists: $OutputPath"
-        $overwrite = Read-Host "Overwrite? (y/N)"
-        if ($overwrite -ne 'y' -and $overwrite -ne 'Y') {
-            Write-Host "Operation cancelled by user" -ForegroundColor Yellow
-            return
+            if ($null -ne $result) { throw 'Registration completed but credential persistence failed. Inspect the newly created method; no rollback was attempted.' }
+            throw 'Software registration failed; sensitive response details suppressed. Inspect Entra for a partially created method or Key Vault key before retrying.'
+        } finally {
+            if ($null -ne $stream) { $stream.Dispose() }
+            if (-not $saved -and $null -ne $stream) { [IO.File]::Delete($path) }
+            if ($null -ne $result -and $result.Credential.Contains('privateKey')) { $result.Credential.privateKey = $null }
+            $configuration.ClientSecret = $null
         }
     }
 }
+# End source: powershell/src/Public/RegisterSoftwarePasskey.ps1
 
-$credential = @{
-    credentialId    = $credentialIdB64Url
-    relyingParty    = $rpId
-    url             = "https://$rpId"
-    userHandle      = $userId
-    userName        = $userName
-    displayName     = $DisplayName
-    methodId        = $registerResponse.id
-    createdDateTime = $registerResponse.createdDateTime
-}
-
-if ($UseKeyVault) {
-    # Save Key Vault reference instead of private key
-    $credential.keyVault = @{
-        vaultName = $KeyVaultName
-        keyName   = $keyName
-        keyId     = $kvKey.key.kid
-    }
-    $credential.authenticationNote = "Private key secured in Azure Key Vault. Use Key Vault Sign API for authentication."
-    
-    $credential | ConvertTo-Json -Depth 5 | Out-File -FilePath $OutputPath -Encoding UTF8
-    
-    Write-Host "  ✓ Credential metadata saved: $OutputPath" -ForegroundColor Green
-    Write-Host "  🔒 Private key remains in Key Vault (secured in HSM for Premium SKU)" -ForegroundColor Green
-} else {
-    # Save private key to file
-    $pkcs8Bytes = $ecDsa.ExportPkcs8PrivateKey()
-    $pemBase64 = [Convert]::ToBase64String($pkcs8Bytes, [Base64FormattingOptions]::InsertLineBreaks)
-    $pem = "-----BEGIN PRIVATE KEY-----`n$pemBase64`n-----END PRIVATE KEY-----"
-    
-    $credential.privateKey = $pem
-    
-    $credential | ConvertTo-Json -Depth 5 | Out-File -FilePath $OutputPath -Encoding UTF8
-    
-    Write-Host "  Credential saved: $OutputPath" -ForegroundColor Green
-    Write-Host "  ⚠️  WARNING: The file contains the private key. Keep it secure!" -ForegroundColor Yellow
-    
-    $ecDsa.Dispose()
-}
-
-$sha256.Dispose()
-
-Write-Host "`n╔════════════════════════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║                    ✓ Passkey Registration Complete             ║" -ForegroundColor Green
-Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Green
-
-Write-Host "`nPasskey Details:" -ForegroundColor Cyan
-Write-Host "  User:         $userName" -ForegroundColor White
-Write-Host "  Display Name: $DisplayName" -ForegroundColor White
-Write-Host "  Method ID:    $($registerResponse.id)" -ForegroundColor White
-Write-Host "  Output File:  $OutputPath" -ForegroundColor White
-
-if ($UseKeyVault) {
-    Write-Host "`nKey Vault Integration:" -ForegroundColor Cyan
-    Write-Host "  Vault:    $KeyVaultName" -ForegroundColor White
-    Write-Host "  Key Name: $keyName" -ForegroundColor White
-    Write-Host "  🔒 Private key in Key Vault (secured in HSM for Premium SKU)" -ForegroundColor Green
-} else {
-    Write-Host "`n⚠️  Security Notice:" -ForegroundColor Yellow
-    Write-Host "  Private key saved to file - protect this file carefully!" -ForegroundColor Yellow
-    Write-Host "  Consider using Key Vault for production scenarios." -ForegroundColor Gray
-}
-
-Write-Host "`nNext Steps:" -ForegroundColor Cyan
-Write-Host "  1. Test authentication with PasskeyLogin.ps1" -ForegroundColor White
-Write-Host "  2. Backup the credential file securely" -ForegroundColor White
-if (-not $UseKeyVault) {
-    Write-Host "  3. Consider migrating to Key Vault for enhanced security" -ForegroundColor White
-}
-
-Write-Host "`n📝 Example PasskeyLogin Command:" -ForegroundColor Cyan
-if ($UseKeyVault) {
-    # Show Key Vault example (most common/important scenario)
-    Write-Host @"
-.\PasskeyLogin.ps1 ``
-    -KeyFilePath "$OutputPath" ``
-    -ClientId "$ClientId" ``
-    -ClientSecret (Read-Host -AsSecureString -Prompt "Client Secret") ``
-    -TenantId "$TenantId"
-"@ -ForegroundColor Gray
-} elseif ($ClientSecret) {
-    # Local key with authentication
-    Write-Host @"
-.\PasskeyLogin.ps1 ``
-    -KeyFilePath "$OutputPath" ``
-    -ClientId "$ClientId" ``
-    -ClientSecret (Read-Host -AsSecureString -Prompt "Client Secret") ``
-    -TenantId "$TenantId"
-"@ -ForegroundColor Gray
-} else {
-    # Local key without authentication
-    Write-Host @"
-.\PasskeyLogin.ps1 ``
-    -KeyFilePath "$OutputPath" ``
-    -TenantId "$TenantId"
-"@ -ForegroundColor Gray
-}
-
-Write-Host ""
-
-# Output credential info for pipeline support
-if ($PassThru) {
-    # Convert SecureString to plain text for pipeline output (needed by PasskeyLogin.ps1)
-    $plainSecret = if ($ClientSecret) {
-        [System.Net.NetworkCredential]::new('', $ClientSecret).Password
-    } else { $null }
-    
-    $output = [PSCustomObject]@{
-        CredentialFilePath    = $OutputPath
-        UserUpn               = $UserUpn
-        DisplayName           = $DisplayName
-        KeyVaultName          = if ($UseKeyVault) { $KeyVaultName } else { $null }
-        KeyName               = if ($UseKeyVault) { $keyName } else { $null }
-        ClientId              = $ClientId
-        ClientSecret          = $plainSecret
-        TenantId              = $TenantId
-        UsesKeyVault          = $UseKeyVault
-        RegistrationTime      = Get-Date
-    }
-    Write-Output $output
-}
-
-#endregion
+# Invoke public command
+Register-EntraSoftwarePasskey @PSBoundParameters

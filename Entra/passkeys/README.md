@@ -1,19 +1,27 @@
-# Preserved public passkey entry points
+# Standalone passkey commands
 
-The original `nathanmcnulty/Entra/passkeys` URLs remain available. [research-passkeys](https://github.com/nathanmcnulty/research-passkeys) is now the source of truth; this folder is maintained there and exported to the personal repository. See its [exact ownership and migration map](https://github.com/nathanmcnulty/research-passkeys/blob/main/docs/migration/personal-passkeys-map.md).
+These public script URLs are preserved as generated, self-contained files from
+[research-passkeys](https://github.com/nathanmcnulty/research-passkeys). Use PowerShell 7.6.
+Maintained source functions build into both these scripts and the Passkey module.
+Source package version: 0.1.0. Do not edit generated scripts.
 
-## Updated and generated files
+Review the coordinated source change in [research draft #33](https://github.com/nathanmcnulty/research-passkeys/pull/33),
+including its `powershell/BUILD.md` usage/build/distribution guide. Downstream PRs record
+the exact reviewed source commit. The module and source belong in research.
 
-- `PasskeyLogin.ps1` and `keyvault/PasskeyLogin.ps1` are generated from the maintained legacy action implementation. Their original positional signatures differ, so the generated variants preserve each signature, the credential-ID alias, and the explicitly opted-in `ESTSAUTH` session alias. The generation starts from one implementation; do not edit generated copies. See [LOGIN-MIGRATION.md](LOGIN-MIGRATION.md) for already-reviewed behavioral changes.
-- `keyvault/Initialize-PasskeyKeyVault.ps1` and `keyvault/New-KeyVaultPasskey.ps1` are generated from the current research reference counterparts, adapting only renamed script references in help/examples/output. The registration script gains the existing research SecureString conversion fixes. No runtime module dependency was added; both references are standalone.
-- `notifications/` is exported from research `samples/notifications`. Its updated template/query covers synced passkeys and Windows Hello and deduplicates companion events. The PowerShell deployment helper and template parameters are unchanged. This is source alignment only, not a deployment.
+`PasskeyLogin.ps1` and `keyvault/PasskeyLogin.ps1` have identical bytes. Both local/software
+and Key Vault signing are available; use named arguments, including CredentialId and
+UserName aliases, rather than relying on the former differing positional signatures.
+Legacy software UP/UV bits are synthesized claims, not proof of fresh user presence or
+verification. Policies may reject them. The cookie is returned only when explicitly asked.
 
-## Preserved historical experiments
+TAP/ESTS registrations use explicit commands and verified registration before persistence.
+Native software attestation requires acknowledgement. Key Vault registration uses none
+attestation. GitHub is separate secret transport, not a signer.
 
-The root TAP/ESTS registrations, TAP-cookie helper, metadata script, and Key Vault TAP/ESTS registrations are imported historical compatibility sources. Their public paths and script behavior are preserved; this is an ownership change, not a claim they have been upgraded to the guarded research implementation.
+`Get-ESTSAuthCookieViaTAP.ps1` requires a secure TAP, UPN and tenant ID, with no embedded
+credentials. Its default cookie result is SecureString; `-AsPlainText` returns the raw string.
+Metadata output is informational and unverified. Read each script's Get-Help before running.
 
-**Warning:** historical registration scripts synthesize software attestation/presence/verification claims. They are not hardware authenticators and are not newly security-certified. Do not run their old examples as validation. The maintained GitHub adapter has a separate explicit legacy-flow opt-in. Real authentication, credential creation, upload, permissions, and deployment require their own review.
-
-The guarded research reference paths intentionally deny unsupported software assertions and retain none attestation where synthetic attestation was removed. Those protections are not replaced by these compatibility sources.
-
-`Register for Authenticator App Passkey.docx` remains an unchanged historical guide at its existing personal-repository URL. It is explicitly excluded from script synchronization. The GitHub adapters added only in the draft have moved to [research github/adapters](https://github.com/nathanmcnulty/research-passkeys/tree/main/github/adapters); no previously published legacy script is removed.
+The original DOCX and unrelated public content remain unchanged. Notifications retain
+existing source alignment; no deployment, enrollment or live authentication was performed.
