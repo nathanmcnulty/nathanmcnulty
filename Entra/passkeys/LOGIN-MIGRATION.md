@@ -59,21 +59,29 @@ No live Entra or Key Vault operation was run. Offline tests prove client-side va
 
 ## Offline verification
 
-PowerShell 7.6.6 and Pester 6.2.0, with HTTP/token calls mocked. No real credentials or real TAP test account was used. Run the standalone login and GitHub adapter suites from this repository root:
+PowerShell 7.6.6 and Pester 6.2.0, with HTTP/token calls mocked. No real credentials or real TAP test account was used. From the personal repository root, run its 48 standalone login/compatibility cases:
 
 ```powershell
-$r = Invoke-Pester -Path ./Entra/passkeys/tests,./Entra/passkeys/github/tests -Output Detailed -PassThru
+$r = Invoke-Pester -Path ./Entra/passkeys/tests -Output Detailed -PassThru
 if ($r.FailedCount) { exit 1 }
 ```
 
-The focused suite includes the original branch's consent/output tests, hostile URL variations, exact-version signing and no redirect forwarding, malformed credential data, SecureString conversion, cookie trust/expiry, no-cookie false results, bounded interrupt processing, and personal alias/position/pipeline compatibility. The published layout contains 104 offline cases (48 login and 56 adapter cases). Tests are evidence for local review only; live authentication requires separate approval.
+The 56 GitHub adapter cases now live only in research-passkeys. From the research repository root, run:
+
+```powershell
+$r = Invoke-Pester -Path ./github/adapters/tests -Output Detailed -PassThru
+if ($r.FailedCount) { exit 1 }
+```
+
+The personal focused suite includes consent/output tests, hostile URL variations, exact-version signing and no redirect forwarding, malformed credential data, SecureString conversion, cookie trust/expiry, no-cookie false results, bounded interrupt processing, and personal alias/position/pipeline compatibility. The former combined personal layout had 104 cases; after relocation, 48 remain in personal and 56 are maintained under research `github/adapters/tests`. Tests are evidence for local review only; live authentication requires separate approval.
 
 ## Draft promotion ledger
 
-- Baseline: `main` at `1c0a52f339915b70e637d727edbaa0a9dd81fe17` (rechecked before publication).
-- Branch: `codex/passkey-github-and-login-hardening-20261011`.
-- Hypothesis: reuse reviewed login boundaries across both standalone entry points and add an explicitly opted-in, no-file GitHub registration/export adapter.
-- Decision: keep for draft review. Independent code/security review completed before packaging; all 104 offline cases passed again against this repository layout on 2026-10-11 (PowerShell 7.6.6, Pester 6.2.0, Linux).
-- Proof: the command above exercises the exact proposed files. Unix subprocess fixtures were executed; Windows subprocess transport was not.
-- Hosted/live proof: deferred pending separate authorization. No real registration, login, Key Vault token acquisition, repository-secret upload, or workflow dispatch was performed. Offline results cannot establish live server acceptance.
-- Scope: the added GitHub exporter centralizes schema validation and stdin-only CLI transport so the registration adapter and existing in-memory credential callers share one narrowly scoped implementation. Existing registration scripts remain unchanged.
+- Original hardening baseline: personal `main` at `1c0a52f339915b70e637d727edbaa0a9dd81fe17`.
+- Canonical reorganization inputs: personal draft `956075f678e25fcbbf5e72b5b42141da9ed33554`, Action draft `2688294bb0f0fcb230df071eb226f2549ec82280`, research draft `ab7672dc891d4fd7c314c59a7d3f56120d61e4ad`.
+- Personal branch: `codex/passkey-github-and-login-hardening-20261011`.
+- Hypothesis: retain the existing public standalone paths while maintaining shared login runtime and GitHub adapters in research, with deterministic compatibility generation and explicit byte/hash export.
+- Decision: keep for draft review. Independent mapping/enforcement review passed. The relocated personal suite passed 48/48 and the research adapter suite passed 56/56 on 2026-10-11 (PowerShell 7.6.6, Pester 6.2.0, Linux). Both generated personal login files match the pre-reorganization draft bytes.
+- Proof: the separate commands above exercise the current repository layouts. Adapter Unix subprocess fixtures were executed; Windows subprocess transport was not.
+- Hosted/live proof: not performed for this source alignment. No real registration, login, Key Vault token acquisition, repository-secret upload, or workflow dispatch was performed. Offline results cannot establish live server acceptance.
+- Scope: GitHub adapters have moved to research; personal legacy root/Key Vault registration paths remain. Compatible initializer/software registration is generated from current research references; incompatible historical registrations are preserved and labeled. See [README.md](README.md) for imported-versus-updated scope and notification source alignment.
