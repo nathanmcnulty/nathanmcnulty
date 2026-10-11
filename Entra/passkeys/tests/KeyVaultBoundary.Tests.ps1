@@ -108,7 +108,9 @@ Describe 'Interrupt loop state' {
         $session=[Microsoft.PowerShell.Commands.WebRequestSession]::new()
         Mock Invoke-WebRequest { @{Content='{"pgid":"ConvergedSignIn"}'} }
         Mock Start-Sleep {}
-        & ([scriptblock]::Create($loop.Extent.Text)) 2>$null
+        # The loop emits a nonterminating diagnostic before the surrounding script throws.
+        # GitHub's pwsh wrapper sets Stop; explicitly test the complete loop here.
+        & { $ErrorActionPreference = 'Continue'; & ([scriptblock]::Create($loop.Extent.Text)) } 2>$null
         Should -Invoke Invoke-WebRequest -Times 10 -Exactly
     }
 }
@@ -121,7 +123,7 @@ Describe 'AuthUrl validation before token acquisition' {
     ) {
         Mock Invoke-RestMethod { throw 'Unexpected HTTP' }
         Mock Invoke-WebRequest { throw 'Unexpected HTTP' }
-        { & "$PSScriptRoot/../PasskeyLogin.ps1" -UserName user@example.com -UserHandle aGFuZGxl -CredentialId aWQ -KeyVaultName testvault -KeyVaultKeyName key -KeyVaultAccessToken offline-token -AuthUrl $BadAuth 2>$null } | Should -Throw '*Invalid auth URL*'
+        { & "$PSScriptRoot/../PasskeyLogin.ps1" -UserName user@example.com -UserHandle aGFuZGxl -CredentialId aWQ -KeyVaultName testvault -KeyVaultKeyName key -KeyVaultAccessToken offline-token -AuthUrl $BadAuth -ErrorAction Continue 2>$null } | Should -Throw '*Invalid auth URL*'
         Should -Invoke Invoke-RestMethod -Times 0
         Should -Invoke Invoke-WebRequest -Times 0
     }
