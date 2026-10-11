@@ -403,9 +403,11 @@ function New-PasskeyExternalStartInfo {
         $system=[Environment]::GetFolderPath([Environment+SpecialFolder]::System)
         if (-not $system) { $system='C:\Windows\System32' } # Pure construction tests on non-Windows hosts.
         $info.FileName=[IO.Path]::Combine($system,'cmd.exe')
-        foreach ($argument in @('/d','/s','/c')) { [void]$info.ArgumentList.Add($argument) }
         $command='""'+$FilePath+'" '+(($Arguments | ForEach-Object {'"'+$_+'"'}) -join ' ')+'"'
-        [void]$info.ArgumentList.Add($command)
+        # cmd.exe consumes a raw Windows command line, not C-runtime argv quoting.
+        # ArgumentList would escape these quotes with backslashes and break /s /c.
+        # The path and every argument were restricted above before this construction.
+        $info.Arguments='/d /s /c '+$command
     } else {
         $info.FileName=$FilePath
         foreach ($argument in $Arguments) { [void]$info.ArgumentList.Add($argument) }
