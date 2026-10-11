@@ -224,9 +224,7 @@ function Get-ServicePrincipalToken {
     
     if ($ClientSecret) {
         # Client Secret authentication - convert SecureString to plain text for API call
-        $plainSecret = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
-            [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ClientSecret)
-        )
+        $plainSecret = [System.Net.NetworkCredential]::new('', $ClientSecret).Password
         
         # Diagnostic: Validate the secret format before sending
         Write-Verbose "Secret length after SecureString conversion: $($plainSecret.Length) chars"
@@ -264,7 +262,7 @@ function Get-ServicePrincipalToken {
         try {
             # Load certificate
             $cert = if ($ClientCertificatePassword) {
-                $plainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ClientCertificatePassword))
+                $plainPassword = [System.Net.NetworkCredential]::new('', $ClientCertificatePassword).Password
                 [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($ClientCertificatePath, $plainPassword)
             } else {
                 [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($ClientCertificatePath)
@@ -911,9 +909,7 @@ Write-Host ""
 if ($PassThru) {
     # Convert SecureString to plain text for pipeline output (needed by PasskeyLogin.ps1)
     $plainSecret = if ($ClientSecret) {
-        [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
-            [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ClientSecret)
-        )
+        [System.Net.NetworkCredential]::new('', $ClientSecret).Password
     } else { $null }
     
     $output = [PSCustomObject]@{

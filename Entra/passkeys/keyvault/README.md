@@ -1,3 +1,5 @@
+> Compatibility mirror maintained in research-passkeys. This historical walkthrough includes legacy software-registration examples, not validated current operational guidance. Read [the source/migration notice](../README.md) before using it; guarded research references have different assertion and attestation boundaries.
+
 ﻿# Entra ID Passkey Management Scripts
 
 A toolkit for setting up and using passwordless authentication with Azure Key Vault-backed passkeys in Microsoft Entra ID.

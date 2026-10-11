@@ -1,11 +1,15 @@
-# Selective login synchronization
+# Login compatibility migration
 
-## Baselines and scope
+## Canonical ownership
+
+The maintained source is now `research-passkeys/github/action-passkey-login`. Both public personal login paths are deterministic generated compatibility variants, with unchanged bytes relative to personal draft head `956075f678e25fcbbf5e72b5b42141da9ed33554`. Edit the action implementation first, render and test the personal variants, then export using the explicit manifest. The guarded research reference login remains separate and unchanged.
+
+## Original hardening baselines and scope
 
 - Action baseline: `fix/silent-consent-and-output`, commit `d443b0d18fe3a9cf162811bd67a67b9dec77a7e7` (main plus its six-file overlay).
 - Personal baseline: `main`, commit `1c0a52f339915b70e637d727edbaa0a9dd81fe17`.
 - Research baseline: `7810619034d73b7061920ecfe17458cf112ad694`, read only. Its intentionally unsupported assertion paths and trusted-user-presence requirement remain untouched.
-- The action login implementation is shared by selective copy into both personal standalone login scripts. This draft promotes the reviewed changes onto the pinned personal baseline; no live enrollment, authentication, deployment, or secret upload was performed.
+- The original hardening shared the action login implementation by selective copy into both personal standalone login scripts; the canonical layout now generates those variants deterministically. This draft promotes the reviewed changes onto the pinned personal baseline; no live enrollment, authentication, deployment, or secret upload was performed.
 
 ## Changes retained
 

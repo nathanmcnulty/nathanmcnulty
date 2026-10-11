@@ -6,12 +6,15 @@ This solution sends a user an email when Microsoft Entra ID records a successful
 
 Use the Sentinel design when Entra audit logs are already ingested into a Sentinel workspace. It is event-driven, normally evaluates new data once per minute, provides a searchable alert trail, and avoids a polling Logic App. If Sentinel is not already licensed and ingesting `AuditLogs`, a scheduled Logic App that queries Microsoft Graph is simpler and less expensive than introducing Sentinel only for this notification.
 
-The analytics query covers all registrations for which Entra supplies a specific authentication method. It deliberately treats these as separate event sources:
+The analytics query covers all registrations for which Entra supplies a specific authentication method. It uses three event sources:
 
-- `Add Passkey (device-bound)` is the canonical passkey event.
-- `User registered security info` is used for all other MFA methods when `AdditionalDetails` contains a nonempty `AuthenticationMethod` other than `Passkey`.
+- `Add Passkey (device-bound)` is the canonical device-bound passkey event.
+- `User registered security info` supplies synced passkeys and other MFA methods through the `AuthenticationMethod` detail.
+- `Add Windows Hello for Business credential` is the canonical Windows Hello for Business event.
 
-Microsoft Entra emits both events for a passkey registration. In a sample tenant, every successful `Add Passkey` event had a nearby `User registered security info` event, so alerting on both would send duplicate emails.
+Microsoft Entra emits a generic `User registered security info` companion event alongside a device-bound passkey event. The events can have different correlation IDs, so the query deduplicates passkey and Windows Hello registrations by user, credential family, and registration second, preferring the canonical `Add ...` event. Generic records with no `AuthenticationMethod` are excluded rather than guessed.
+
+Thanks to Jonathan Hope for identifying the synced-passkey audit-log path and sharing the query that informed this update.
 
 Guest UPNs containing `#EXT#` are excluded because a guest UPN is usually not a deliverable email address. See [Limitations](#limitations) for options.
 
@@ -40,7 +43,7 @@ The sender parameter must identify an existing Exchange Online user or shared ma
 
 ## Deploy
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fnathanmcnulty%2Fnathanmcnulty%2Frefs%2Fheads%2Fmain%2FEntra%2Fpasskeys%2Fnotifications%2Fmfa-registration-notification.json)
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fnathanmcnulty%2Fresearch-passkeys%2Frefs%2Fheads%2Fmain%2Fsamples%2Fnotifications%2Fmfa-registration-notification.json)
 
 Deploy [mfa-registration-notification.json](mfa-registration-notification.json) to the resource group where the Logic App should reside. Supply the existing workspace name, workspace resource group, and sender mailbox.
 
@@ -142,18 +145,21 @@ The template deploys this query as an NRT analytics rule:
 ```kql
 AuditLogs
 | where Result =~ "success"
-| where OperationName has "Add Passkey" or OperationName == "User registered security info"
-| extend TargetResources = todynamic(TargetResources), AdditionalDetails = todynamic(AdditionalDetails), InitiatedBy = todynamic(InitiatedBy)
-| extend RecipientEmail = tostring(TargetResources[0].userPrincipalName), SourceIPAddress = tostring(InitiatedBy.user.ipAddress)
+| where OperationName startswith "Add Passkey"
+    or OperationName in ("Add Windows Hello for Business credential", "User registered security info")
+| extend RecipientEmail = tostring(TargetResources[0].userPrincipalName),
+         SourceIPAddress = tostring(InitiatedBy.user.ipAddress)
 | mv-apply Detail = AdditionalDetails on (
-    summarize AuthenticationMethod = take_anyif(tostring(Detail.value), tostring(Detail.key) == "AuthenticationMethod")
+    summarize AuthMethodRaw = take_anyif(tostring(Detail.value), tostring(Detail.key) == "AuthenticationMethod")
 )
-| extend AuthenticationMethod = case(
-    OperationName has "Add Passkey", replace_string(OperationName, "Add ", ""),
-    AuthenticationMethod
+| extend AuthenticationMethod = iff(OperationName startswith "Add ", substring(OperationName, 4), AuthMethodRaw)
+| where isnotempty(AuthenticationMethod) and isnotempty(RecipientEmail) and RecipientEmail !contains "#EXT#"
+| extend RegistrationKey = case(
+    AuthenticationMethod startswith "Passkey", strcat(tolower(RecipientEmail), "|passkey|", tostring(bin(TimeGenerated, 1s))),
+    AuthenticationMethod contains "Windows Hello for Business", strcat(tolower(RecipientEmail), "|whfb|", tostring(bin(TimeGenerated, 1s))),
+    tostring(Id)
 )
-| where OperationName has "Add Passkey" or (isnotempty(AuthenticationMethod) and AuthenticationMethod !~ "Passkey")
-| where isnotempty(RecipientEmail) and RecipientEmail !contains "#EXT#"
+| summarize arg_max(iff(OperationName startswith "Add ", 1, 0), *) by RegistrationKey
 | extend AccountName = tostring(split(RecipientEmail, "@")[0]), AccountUPNSuffix = tostring(split(RecipientEmail, "@")[1])
 | extend RegistrationTime = strcat(format_datetime(TimeGenerated, "yyyy-MM-dd HH:mm:ss"), " UTC")
 | project TimeGenerated, RecipientEmail, AccountName, AccountUPNSuffix, AuthenticationMethod, RegistrationTime, SourceIPAddress, OperationName, CorrelationId
@@ -162,16 +168,18 @@ AuditLogs
 ## Test and verify
 
 1. Run the KQL directly in Advanced Hunting or the workspace Logs page and confirm it returns the expected user and method.
-2. Register a test passkey. In the observed tenant, the audit operation was `Add Passkey (device-bound)`.
-3. Confirm the NRT rule creates one informational alert.
-4. Confirm the Sentinel automation rule records a successful playbook action.
-5. Confirm the Logic App run sends a Graph request that returns HTTP `202`.
-6. Confirm the user receives exactly one message with the expected method, time, and source IP address.
-7. Verify that the managed identity cannot send as a mailbox outside the Exchange management scope.
+2. Register device-bound and synced test passkeys. In the observed tenant, they produced `Add Passkey (device-bound)` and `User registered security info` events, respectively.
+3. If Windows Hello for Business notifications are required, register a test credential and confirm the `Add Windows Hello for Business credential` event is returned.
+4. Confirm the NRT rule creates exactly one informational alert per registration.
+5. Confirm the Sentinel automation rule records a successful playbook action.
+6. Confirm the Logic App run sends a Graph request that returns HTTP `202`.
+7. Confirm the user receives exactly one message with the expected method, time, and source IP address.
+8. Verify that the managed identity cannot send as a mailbox outside the Exchange management scope.
 
 ## Limitations
 
 - NRT rules use a one-minute lookback and depend on prompt ingestion of Entra audit logs. Monitor Sentinel analytics rule health for delayed or failed runs.
+- Passkey and Windows Hello companion events are deduplicated when they share a user, credential family, and registration second. Delayed ingestion across separate NRT evaluations can still produce duplicate alerts.
 - Some generic `User registered security info` records have no `AuthenticationMethod` detail. They are excluded to avoid ambiguous and duplicate notifications.
 - Guest users are excluded. To notify guests, resolve the target user ID to a deliverable `mail` address in Microsoft Graph before sending, which requires an additional directory-read permission and workflow action.
 - The notification says that a method was registered; it does not prove the user personally performed the action. The supplied message directs users to contact the helpdesk if the activity was unexpected.
