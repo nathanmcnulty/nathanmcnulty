@@ -248,14 +248,30 @@ function New-PasskeyOperationError {
         [ValidateSet('NotStarted','Unconfirmed','Verified')][string]$EnrollmentStatus = 'NotStarted',
         [ValidateSet('NotStarted','Incomplete','Complete')][string]$ExportStatus = 'NotStarted',
         [string[]]$ConfirmedWrites = @(),
-        [ValidateSet('PASSKEY_PRIVATE_CREDENTIAL_ID','PASSKEY_PRIVATE_USER_HANDLE','PASSKEY_PRIVATE_USER_PRINCIPAL_NAME','PASSKEY_PRIVATE_KEY')][string]$FailedOrUnknownSecret
+        [ValidateSet('PASSKEY_PRIVATE_CREDENTIAL_ID','PASSKEY_PRIVATE_USER_HANDLE','PASSKEY_PRIVATE_USER_PRINCIPAL_NAME','PASSKEY_PRIVATE_KEY')][string]$FailedOrUnknownSecret,
+        [AllowNull()][object]$AuthorizationFailure
     )
     $names = @('PASSKEY_PRIVATE_CREDENTIAL_ID','PASSKEY_PRIVATE_USER_HANDLE','PASSKEY_PRIVATE_USER_PRINCIPAL_NAME','PASSKEY_PRIVATE_KEY')
     $confirmed = @($ConfirmedWrites | Where-Object { $_ -cin $names })
     $code = "Passkey$($Stage)Failed"
     $status = [pscustomobject]@{ Code = $code; Stage = $Stage; EnrollmentStatus = $EnrollmentStatus; ExportStatus = $ExportStatus
         ConfirmedWrites = $confirmed; FailedOrUnknownSecret = $FailedOrUnknownSecret }
+    # Only locally allowlisted categories and numeric service identifiers leave the operation.
+    if ($AuthorizationFailure) {
+        $categories = @('TransportFailure','HttpFailure','RedirectShape','UntrustedRedirect','OAuthRejected','CallbackBinding','ConfigMissing','ConfigInvalid','ServiceRejected','SignInReturned','UnsupportedContinuation','FormMissing','FormAmbiguous','FormMethod','FormAction','FormControls','InputMissing','InputAmbiguous','DuplicateField','HiddenFieldsMissing','KmsiFieldsMissing','RedirectLimit')
+        $pages = @('KmsiBroker','KmsiInterrupt','ConvergedSignIn','Consent','ConvergedConsent','CmsiInterrupt','ConvergedProofUp','Unknown')
+        $status | Add-Member -NotePropertyName FailureCategory -NotePropertyValue $(if ($AuthorizationFailure.Category -is [string] -and $AuthorizationFailure.Category -cin $categories) { $AuthorizationFailure.Category } else { 'UnsupportedContinuation' })
+        $http = 0; $service = 0
+        $httpValue = if ([int]::TryParse([string]$AuthorizationFailure.HttpStatus, [ref]$http) -and $http -ge 100 -and $http -le 599) { $http } else { $null }
+        $serviceValue = if ([int]::TryParse([string]$AuthorizationFailure.ServiceErrorCode, [ref]$service) -and $service -gt 0) { $service } else { $null }
+        $status | Add-Member -NotePropertyName HttpStatus -NotePropertyValue $httpValue
+        $status | Add-Member -NotePropertyName ServiceErrorCode -NotePropertyValue $serviceValue
+        $status | Add-Member -NotePropertyName AadstsCode -NotePropertyValue $(if ($AuthorizationFailure.AadstsCode -is [string] -and $AuthorizationFailure.AadstsCode -cmatch '^AADSTS[0-9]{4,12}$') { $AuthorizationFailure.AadstsCode } else { $null })
+        $status | Add-Member -NotePropertyName MissingField -NotePropertyValue $(if ($AuthorizationFailure.MissingField -is [string] -and $AuthorizationFailure.MissingField -cin @('sCtx','sFT','canary','correlationId','form.action','input.name','input.value')) { $AuthorizationFailure.MissingField } else { $null })
+        $status | Add-Member -NotePropertyName ContinuationPage -NotePropertyValue $(if ($AuthorizationFailure.Page -is [string] -and $AuthorizationFailure.Page -cin $pages) { $AuthorizationFailure.Page } else { 'Unknown' })
+    }
     $message = "$code. Stage: $Stage. Enrollment: $EnrollmentStatus. Export: $ExportStatus. Service details suppressed."
+    if ($AuthorizationFailure) { $message += " Category: $($status.FailureCategory). HTTP: $($status.HttpStatus). Service code: $($status.ServiceErrorCode). AADSTS: $($status.AadstsCode). Page: $($status.ContinuationPage). Field: $($status.MissingField)." }
     if ($EnrollmentStatus -eq 'Unconfirmed') { $message += ' A method may exist; inspect My Sign-ins before retrying.' }
     if ($EnrollmentStatus -eq 'Verified' -and $ExportStatus -ne 'NotStarted') { $message += ' Enrollment completed, but export did not finish.' }
     if ($ExportStatus -eq 'Incomplete') {
