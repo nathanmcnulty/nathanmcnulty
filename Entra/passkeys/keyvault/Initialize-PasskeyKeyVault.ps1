@@ -219,7 +219,8 @@ function New-PasskeyOperationError {
         [ValidateSet('NotStarted','Incomplete','Complete')][string]$ExportStatus = 'NotStarted',
         [string[]]$ConfirmedWrites = @(),
         [ValidateSet('PASSKEY_PRIVATE_CREDENTIAL_ID','PASSKEY_PRIVATE_USER_HANDLE','PASSKEY_PRIVATE_USER_PRINCIPAL_NAME','PASSKEY_PRIVATE_KEY')][string]$FailedOrUnknownSecret,
-        [AllowNull()][object]$AuthorizationFailure
+        [AllowNull()][object]$AuthorizationFailure,
+        [AllowNull()][object]$CliFailure
     )
     $names = @('PASSKEY_PRIVATE_CREDENTIAL_ID','PASSKEY_PRIVATE_USER_HANDLE','PASSKEY_PRIVATE_USER_PRINCIPAL_NAME','PASSKEY_PRIVATE_KEY')
     $confirmed = @($ConfirmedWrites | Where-Object { $_ -cin $names })
@@ -240,7 +241,17 @@ function New-PasskeyOperationError {
         $status | Add-Member -NotePropertyName MissingField -NotePropertyValue $(if ($AuthorizationFailure.MissingField -is [string] -and $AuthorizationFailure.MissingField -cin @('sCtx','sFT','canary','correlationId','form.action','input.name','input.value')) { $AuthorizationFailure.MissingField } else { $null })
         $status | Add-Member -NotePropertyName ContinuationPage -NotePropertyValue $(if ($AuthorizationFailure.Page -is [string] -and $AuthorizationFailure.Page -cin $pages) { $AuthorizationFailure.Page } else { 'Unknown' })
     }
+    if ($CliFailure -and $Stage -in @('GitHubPreflight','GitHubExport')) {
+        $category = if ($CliFailure.FailureCategory -is [string] -and $CliFailure.FailureCategory -cin @('CommandMissing','StartFailed','TransportFailure','TimedOut','AuthenticationFailed','AuthorizationDenied','RepositoryUnavailable','ApiFailure','NonzeroExit')) { $CliFailure.FailureCategory } else { 'NonzeroExit' }
+        $check = if ($CliFailure.CliCheck -is [string] -and $CliFailure.CliCheck -cin @('RepositoryAccess','SecretWrite','Command')) { $CliFailure.CliCheck } else { 'Command' }
+        $http = 0; $exit = 0
+        $status | Add-Member -NotePropertyName FailureCategory -NotePropertyValue $category
+        $status | Add-Member -NotePropertyName CliCheck -NotePropertyValue $check
+        $status | Add-Member -NotePropertyName HttpStatus -NotePropertyValue $(if ([int]::TryParse([string]$CliFailure.HttpStatus, [ref]$http) -and $http -ge 100 -and $http -le 599) { $http } else { $null })
+        $status | Add-Member -NotePropertyName CliExitCode -NotePropertyValue $(if ([int]::TryParse([string]$CliFailure.CliExitCode, [ref]$exit)) { $exit } else { $null })
+    }
     $message = "$code. Stage: $Stage. Enrollment: $EnrollmentStatus. Export: $ExportStatus. Service details suppressed."
+    if ($CliFailure -and $Stage -in @('GitHubPreflight','GitHubExport')) { $message += " CLI check: $($status.CliCheck). Category: $($status.FailureCategory). HTTP: $($status.HttpStatus). Exit: $($status.CliExitCode)." }
     if ($AuthorizationFailure) { $message += " Category: $($status.FailureCategory). HTTP: $($status.HttpStatus). Service code: $($status.ServiceErrorCode). AADSTS: $($status.AadstsCode). Page: $($status.ContinuationPage). Field: $($status.MissingField)." }
     if ($EnrollmentStatus -eq 'Unconfirmed') { $message += ' A method may exist; inspect My Sign-ins before retrying.' }
     if ($EnrollmentStatus -eq 'Verified' -and $ExportStatus -ne 'NotStarted') { $message += ' Enrollment completed, but export did not finish.' }

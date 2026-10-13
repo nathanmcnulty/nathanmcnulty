@@ -177,7 +177,8 @@ function New-PasskeyOperationError {
         [ValidateSet('NotStarted','Incomplete','Complete')][string]$ExportStatus = 'NotStarted',
         [string[]]$ConfirmedWrites = @(),
         [ValidateSet('PASSKEY_PRIVATE_CREDENTIAL_ID','PASSKEY_PRIVATE_USER_HANDLE','PASSKEY_PRIVATE_USER_PRINCIPAL_NAME','PASSKEY_PRIVATE_KEY')][string]$FailedOrUnknownSecret,
-        [AllowNull()][object]$AuthorizationFailure
+        [AllowNull()][object]$AuthorizationFailure,
+        [AllowNull()][object]$CliFailure
     )
     $names = @('PASSKEY_PRIVATE_CREDENTIAL_ID','PASSKEY_PRIVATE_USER_HANDLE','PASSKEY_PRIVATE_USER_PRINCIPAL_NAME','PASSKEY_PRIVATE_KEY')
     $confirmed = @($ConfirmedWrites | Where-Object { $_ -cin $names })
@@ -198,7 +199,17 @@ function New-PasskeyOperationError {
         $status | Add-Member -NotePropertyName MissingField -NotePropertyValue $(if ($AuthorizationFailure.MissingField -is [string] -and $AuthorizationFailure.MissingField -cin @('sCtx','sFT','canary','correlationId','form.action','input.name','input.value')) { $AuthorizationFailure.MissingField } else { $null })
         $status | Add-Member -NotePropertyName ContinuationPage -NotePropertyValue $(if ($AuthorizationFailure.Page -is [string] -and $AuthorizationFailure.Page -cin $pages) { $AuthorizationFailure.Page } else { 'Unknown' })
     }
+    if ($CliFailure -and $Stage -in @('GitHubPreflight','GitHubExport')) {
+        $category = if ($CliFailure.FailureCategory -is [string] -and $CliFailure.FailureCategory -cin @('CommandMissing','StartFailed','TransportFailure','TimedOut','AuthenticationFailed','AuthorizationDenied','RepositoryUnavailable','ApiFailure','NonzeroExit')) { $CliFailure.FailureCategory } else { 'NonzeroExit' }
+        $check = if ($CliFailure.CliCheck -is [string] -and $CliFailure.CliCheck -cin @('RepositoryAccess','SecretWrite','Command')) { $CliFailure.CliCheck } else { 'Command' }
+        $http = 0; $exit = 0
+        $status | Add-Member -NotePropertyName FailureCategory -NotePropertyValue $category
+        $status | Add-Member -NotePropertyName CliCheck -NotePropertyValue $check
+        $status | Add-Member -NotePropertyName HttpStatus -NotePropertyValue $(if ([int]::TryParse([string]$CliFailure.HttpStatus, [ref]$http) -and $http -ge 100 -and $http -le 599) { $http } else { $null })
+        $status | Add-Member -NotePropertyName CliExitCode -NotePropertyValue $(if ([int]::TryParse([string]$CliFailure.CliExitCode, [ref]$exit)) { $exit } else { $null })
+    }
     $message = "$code. Stage: $Stage. Enrollment: $EnrollmentStatus. Export: $ExportStatus. Service details suppressed."
+    if ($CliFailure -and $Stage -in @('GitHubPreflight','GitHubExport')) { $message += " CLI check: $($status.CliCheck). Category: $($status.FailureCategory). HTTP: $($status.HttpStatus). Exit: $($status.CliExitCode)." }
     if ($AuthorizationFailure) { $message += " Category: $($status.FailureCategory). HTTP: $($status.HttpStatus). Service code: $($status.ServiceErrorCode). AADSTS: $($status.AadstsCode). Page: $($status.ContinuationPage). Field: $($status.MissingField)." }
     if ($EnrollmentStatus -eq 'Unconfirmed') { $message += ' A method may exist; inspect My Sign-ins before retrying.' }
     if ($EnrollmentStatus -eq 'Verified' -and $ExportStatus -ne 'NotStarted') { $message += ' Enrollment completed, but export did not finish.' }
@@ -756,6 +767,8 @@ function Invoke-EntraRegistrationTapAuthentication {
         $config = Get-EntraRegistrationPageConfig -Content $response.Content
         if ($config.pgid -ne 'ConvergedSignIn' -or -not $config.sFT -or -not $config.sCtx) { throw 'Unexpected registration sign-in page.' }
         $Context.Stage = 'CredentialType'
+        $flowToken = $config.sFT
+        try {
         $gct = Invoke-EntraRegistrationRestMethod -Uri 'https://login.microsoftonline.com/common/GetCredentialType?mkt=en-US' `
             -Method POST -Body (@{
                 username = $UserPrincipalName; isOtherIdpSupported = $false; checkPhones = $false
@@ -763,7 +776,8 @@ function Invoke-EntraRegistrationTapAuthentication {
                 originalRequest = $config.sCtx; flowToken = $config.sFT
             } | ConvertTo-Json -Compress) -ContentType 'application/json' `
             -Headers @{ canary = $config.apiCanary; hpgrequestid = $config.sessionId; hpgact = '1800'; hpgid = '1104' }
-        $flowToken = if ($gct.FlowToken) { $gct.FlowToken } else { $config.sFT }
+        if ($gct.FlowToken -is [string] -and -not [string]::IsNullOrWhiteSpace($gct.FlowToken)) { $flowToken = $gct.FlowToken }
+        } catch { Write-Verbose 'Credential-type discovery failed; continuing with the original sign-in flow token.' }
         $postUri = if ($config.urlPost) { [uri]::new([uri]'https://login.microsoftonline.com/', [string]$config.urlPost) } else { [uri]'https://login.microsoftonline.com/common/login' }
         $null = Assert-EntraRegistrationUri $postUri.AbsoluteUri
         if ($postUri.Host -ne 'login.microsoftonline.com') { throw 'Unexpected TAP sign-in destination.' }
@@ -1006,14 +1020,38 @@ function Update-EntraKeyVaultVerificationSession {
     } catch { Write-Verbose 'Keeping the existing authorized registration session.' }
 }
 
-function Assert-EntraRegistrationVerified {
+function Assert-EntraRegistrationFinalized {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][int]$StatusCode, [Parameter(Mandatory)]$Response, [Parameter(Mandatory)][string]$ExpectedCredentialId)
+    param([Parameter(Mandatory)][int]$StatusCode, [Parameter(Mandatory)]$Response)
     if ($StatusCode -lt 200 -or $StatusCode -ge 300 -or $Response.VerificationState -ne 2 -or
         ($Response.ErrorCode -and $Response.ErrorCode -ne 0)) { throw 'Registration was not confirmed successful.' }
-    $ids = @($Response.DataUpdates.FidoDevices | ForEach-Object { [string]$_.CredentialId })
-    if ($ids.Count -ne 1 -or $ids[0] -cne $ExpectedCredentialId) { throw 'Registration response did not confirm the expected credential ID.' }
+    # DataUpdates.FidoDevices.CredentialId is an opaque service method identifier.
+    # Finalization is not proof that the submitted WebAuthn credential has replicated.
     $Response
+}
+
+function Confirm-EntraRegistrationCredential {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$CredentialId,
+        [ValidateRange(1,10)][int]$AttemptCount = 5, [ValidateRange(0,60)][int]$RetryDelaySeconds = 2)
+    # Match the public My Sign-ins replication probe, without resubmitting attestation.
+    $body = @{ Type = 18; CredentialVerification = $true
+        VerificationData = (@{ CredentialId = $CredentialId } | ConvertTo-Json -Compress) } | ConvertTo-Json -Compress
+    $headers = Get-EntraRegistrationHeaders -Context $Context -IncludeToken -IncludeSession
+    for ($attempt = 1; $attempt -le $AttemptCount; $attempt++) {
+        $response = Invoke-EntraRegistrationWebRequest -Uri "$($Context.RedirectUri)/api/authenticationmethods/verify" `
+            -Method POST -Body $body -ContentType 'application/json' -Headers $headers -WebSession $Context.WebSession
+        try { $json = $response.Content | ConvertFrom-Json -ErrorAction Stop }
+        catch { throw 'Credential verification returned invalid JSON; details suppressed.' }
+        if ([int]$response.StatusCode -lt 200 -or [int]$response.StatusCode -ge 300 -or
+            ($json.ErrorCode -and $json.ErrorCode -ne 0)) { throw 'Credential verification failed.' }
+        if ($json.VerificationState -eq 2) {
+            return [pscustomobject]@{ CredentialId = $CredentialId; VerificationState = 2 }
+        }
+        if ($json.VerificationState -ne 1) { throw 'Credential verification was rejected.' }
+        if ($attempt -lt $AttemptCount) { Start-Sleep -Seconds $RetryDelaySeconds }
+    }
+    throw 'The submitted credential has not been confirmed; enrollment remains unconfirmed.'
 }
 
 function Invoke-EntraKeyVaultRegistrationVerification {
@@ -1044,7 +1082,9 @@ function Invoke-EntraKeyVaultRegistrationVerification {
             $json = $response.Content | ConvertFrom-Json -ErrorAction Stop
         } catch { Write-Verbose 'Registration verification did not return a valid response.' }
         if ($json.VerificationState -eq 2) {
-            return (Assert-EntraRegistrationVerified -StatusCode ([int]$response.StatusCode) -Response $json -ExpectedCredentialId $Attestation.CredentialId)
+            $null = Assert-EntraRegistrationFinalized -StatusCode ([int]$response.StatusCode) -Response $json
+            return (Confirm-EntraRegistrationCredential -Context $Context -CredentialId $Attestation.CredentialId `
+                -AttemptCount $AttemptCount -RetryDelaySeconds $RetryDelaySeconds)
         }
         if ($json.ErrorCode -eq 20 -and $json.VerificationState -eq 3 -and $mode -eq 'empty' -and $Request.PostInfo) {
             $mode = 'context'

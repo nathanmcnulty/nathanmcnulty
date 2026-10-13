@@ -249,7 +249,8 @@ function New-PasskeyOperationError {
         [ValidateSet('NotStarted','Incomplete','Complete')][string]$ExportStatus = 'NotStarted',
         [string[]]$ConfirmedWrites = @(),
         [ValidateSet('PASSKEY_PRIVATE_CREDENTIAL_ID','PASSKEY_PRIVATE_USER_HANDLE','PASSKEY_PRIVATE_USER_PRINCIPAL_NAME','PASSKEY_PRIVATE_KEY')][string]$FailedOrUnknownSecret,
-        [AllowNull()][object]$AuthorizationFailure
+        [AllowNull()][object]$AuthorizationFailure,
+        [AllowNull()][object]$CliFailure
     )
     $names = @('PASSKEY_PRIVATE_CREDENTIAL_ID','PASSKEY_PRIVATE_USER_HANDLE','PASSKEY_PRIVATE_USER_PRINCIPAL_NAME','PASSKEY_PRIVATE_KEY')
     $confirmed = @($ConfirmedWrites | Where-Object { $_ -cin $names })
@@ -270,7 +271,17 @@ function New-PasskeyOperationError {
         $status | Add-Member -NotePropertyName MissingField -NotePropertyValue $(if ($AuthorizationFailure.MissingField -is [string] -and $AuthorizationFailure.MissingField -cin @('sCtx','sFT','canary','correlationId','form.action','input.name','input.value')) { $AuthorizationFailure.MissingField } else { $null })
         $status | Add-Member -NotePropertyName ContinuationPage -NotePropertyValue $(if ($AuthorizationFailure.Page -is [string] -and $AuthorizationFailure.Page -cin $pages) { $AuthorizationFailure.Page } else { 'Unknown' })
     }
+    if ($CliFailure -and $Stage -in @('GitHubPreflight','GitHubExport')) {
+        $category = if ($CliFailure.FailureCategory -is [string] -and $CliFailure.FailureCategory -cin @('CommandMissing','StartFailed','TransportFailure','TimedOut','AuthenticationFailed','AuthorizationDenied','RepositoryUnavailable','ApiFailure','NonzeroExit')) { $CliFailure.FailureCategory } else { 'NonzeroExit' }
+        $check = if ($CliFailure.CliCheck -is [string] -and $CliFailure.CliCheck -cin @('RepositoryAccess','SecretWrite','Command')) { $CliFailure.CliCheck } else { 'Command' }
+        $http = 0; $exit = 0
+        $status | Add-Member -NotePropertyName FailureCategory -NotePropertyValue $category
+        $status | Add-Member -NotePropertyName CliCheck -NotePropertyValue $check
+        $status | Add-Member -NotePropertyName HttpStatus -NotePropertyValue $(if ([int]::TryParse([string]$CliFailure.HttpStatus, [ref]$http) -and $http -ge 100 -and $http -le 599) { $http } else { $null })
+        $status | Add-Member -NotePropertyName CliExitCode -NotePropertyValue $(if ([int]::TryParse([string]$CliFailure.CliExitCode, [ref]$exit)) { $exit } else { $null })
+    }
     $message = "$code. Stage: $Stage. Enrollment: $EnrollmentStatus. Export: $ExportStatus. Service details suppressed."
+    if ($CliFailure -and $Stage -in @('GitHubPreflight','GitHubExport')) { $message += " CLI check: $($status.CliCheck). Category: $($status.FailureCategory). HTTP: $($status.HttpStatus). Exit: $($status.CliExitCode)." }
     if ($AuthorizationFailure) { $message += " Category: $($status.FailureCategory). HTTP: $($status.HttpStatus). Service code: $($status.ServiceErrorCode). AADSTS: $($status.AadstsCode). Page: $($status.ContinuationPage). Field: $($status.MissingField)." }
     if ($EnrollmentStatus -eq 'Unconfirmed') { $message += ' A method may exist; inspect My Sign-ins before retrying.' }
     if ($EnrollmentStatus -eq 'Verified' -and $ExportStatus -ne 'NotStarted') { $message += ' Enrollment completed, but export did not finish.' }
@@ -688,17 +699,29 @@ function Invoke-EntraLoginWebRequest {
     param([Parameter(Mandatory)][hashtable]$Context,[Parameter(Mandatory)][string]$Uri,[string]$Method='Get',$Body)
     $current = Assert-EntraLoginUri $Uri
     for ($redirects = 0; $redirects -le 10; $redirects++) {
-        $args = @{Uri=$current.AbsoluteUri;Method=$Method;WebSession=$Context.Session;MaximumRedirection=0;SkipHttpErrorCheck=$true;UseBasicParsing=$true;ConnectionTimeoutSeconds=30;OperationTimeoutSeconds=30;Verbose=$false;Debug=$false;ErrorAction='Stop'}
+        $args = @{Uri=$current.AbsoluteUri;Method=$Method;WebSession=$Context.Session;MaximumRedirection=0;SkipHttpErrorCheck=$true;UseBasicParsing=$true;ConnectionTimeoutSeconds=30;OperationTimeoutSeconds=30;Verbose=$false;Debug=$false}
         if ($Context.Proxy) { $args.Proxy=$Context.Proxy }
         if ($null -ne $Body) { $args.Body=$Body }
-        try { $response = Invoke-WebRequest @args } catch { throw 'Entra login request failed; details suppressed.' }
+        $transportErrors = @()
+        try {
+            $responses = @(Invoke-WebRequest @args -ErrorAction SilentlyContinue -ErrorVariable transportErrors)
+            if ($responses.Count -ne 1) { throw 'Login transport did not return one response.' }
+            $response = $responses[0]
+            foreach ($record in $transportErrors) {
+                if ($record.FullyQualifiedErrorId -cne 'MaximumRedirectExceeded,Microsoft.PowerShell.Commands.InvokeWebRequestCommand' -or
+                    [int]$response.StatusCode -notin @(301,302,303,307,308)) { throw 'Unexpected login transport error.' }
+            }
+        } catch { $Error.Remove($_); throw 'Entra login request failed; details suppressed.' }
+        finally { foreach ($record in $transportErrors) { $Error.Remove($record) }; $transportErrors = $null }
         if ($response.StatusCode -ge 400) { throw 'Entra login request failed; details suppressed.' }
         if ($response.StatusCode -lt 300 -or $response.StatusCode -ge 400) { return $response }
         if ($redirects -eq 10) { throw 'Entra login exceeded the redirect limit.' }
-        $location = [string](@($response.Headers.Location)[0])
-        if ([string]::IsNullOrWhiteSpace($location)) { throw 'Entra login returned an invalid redirect.' }
-        $next = [uri]::new($current,$location)
-        $current = Assert-EntraLoginUri $next.AbsoluteUri
+        $locations = @($response.Headers.Location)
+        if ($locations.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$locations[0])) { throw 'Entra login returned an invalid redirect.' }
+        try {
+            $next = [uri]::new($current,[string]$locations[0])
+            $current = Assert-EntraLoginUri $next.AbsoluteUri
+        } catch { $Error.Remove($_); throw 'Entra login returned an invalid or untrusted redirect; details suppressed.' }
         # Never re-post an assertion to a redirected target, including same-origin 307/308.
         if ([int]$response.StatusCode -in 307,308 -and $Method -ine 'Get') { throw 'Entra login refused an assertion-preserving redirect.' }
         $Method='Get';$Body=$null
@@ -707,7 +730,7 @@ function Invoke-EntraLoginWebRequest {
 
 function Read-EntraLoginPage {
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$Response,[switch]$RequireConfig)
+    param([Parameter(Mandatory)]$Response,[switch]$RequireConfig,[switch]$AllowNoSession)
     $content=[string]$Response.Content
     if ($content.Length -gt 2097152) { throw 'Entra login returned an oversized response.' }
     $start=-1
@@ -735,7 +758,13 @@ function Read-EntraLoginPage {
     if ($end -lt 0) { throw 'Entra login returned malformed configuration JSON.' }
     try { $state=$content.Substring($start,$end-$start+1) | ConvertFrom-Json -AsHashtable -ErrorAction Stop } catch { throw 'Entra login returned malformed configuration JSON.' }
     if ($state -isnot [System.Collections.IDictionary]) { throw 'Entra login returned invalid configuration.' }
-    if ($state.error -or $state.sErrorCode -or $state.strServiceExceptionMessage -or $state.sErrTxt -or $state.errorCode) { throw 'Entra login was denied by the server; details suppressed.' }
+    # sso_reload can report no existing session (50058) while offering the requested
+    # user's FIDO challenge. It is a sign-in start, not a rejected assertion.
+    $noSession = $AllowNoSession -and $state.pgid -ceq 'ConvergedSignIn' -and [string]$state.sErrorCode -ceq '50058' -and
+        $state.oGetCredTypeResult.Credentials.HasFido -eq $true -and
+        -not [string]::IsNullOrWhiteSpace($state.sFidoChallenge) -and
+        -not [string]::IsNullOrWhiteSpace($state.sFT) -and -not [string]::IsNullOrWhiteSpace($state.sCtx)
+    if ($state.error -or ($state.sErrorCode -and -not $noSession) -or $state.strServiceExceptionMessage -or $state.sErrTxt -or $state.errorCode) { throw 'Entra login was denied by the server; details suppressed.' }
     return $state
 }
 # End source: powershell/src/Entra/LoginRequest.ps1
@@ -839,7 +868,7 @@ function Start-EntraPasskeyLogin {
     [CmdletBinding()]
     param([Parameter(Mandatory)][hashtable]$Context)
     $response=Invoke-EntraLoginWebRequest -Context $Context -Uri $Context.AuthUrl
-    $state=Read-EntraLoginPage -Response $response -RequireConfig
+    $state=Read-EntraLoginPage -Response $response -RequireConfig -AllowNoSession
     if (-not $state.oGetCredTypeResult.Credentials.HasFido -or [string]::IsNullOrWhiteSpace($state.sFidoChallenge)) { throw 'FIDO2 authentication is unavailable.' }
     $Context.InitialState=$state
 }
