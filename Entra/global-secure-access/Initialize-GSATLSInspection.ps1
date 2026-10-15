@@ -149,7 +149,7 @@
 .NOTES
     Author: Nathan McNulty
     Date: August 3, 2026
-    Requires: PowerShell 7.4+, Microsoft.Graph.Authentication, Az.Accounts modules
+    Requires: PowerShell 7.6+, Microsoft.Graph.Authentication, Az.Accounts modules
 
     Prerequisites:
     - Microsoft Graph permissions: NetworkAccess.ReadWrite.All, DeviceManagementConfiguration.ReadWrite.All
@@ -168,7 +168,7 @@
     - https://learn.microsoft.com/en-us/security/benchmark/azure/baselines/key-vault-security-baseline
 #>
 
-#Requires -Version 7.4
+#Requires -Version 7.6
 #Requires -Modules Microsoft.Graph.Authentication, Az.Accounts
 
 [CmdletBinding(SupportsShouldProcess)]
@@ -1324,8 +1324,8 @@ Write-Host "║     Global Secure Access TLS Inspection Setup                 �
 Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Green
 
 # Verify PowerShell version
-if ($PSVersionTable.PSVersion -lt [version]'7.4') {
-    Write-Error "This script requires PowerShell 7.4 or later for its .NET certificate APIs"
+if ($PSVersionTable.PSVersion -lt [version]'7.6') {
+    Write-Error "This script requires PowerShell 7.6 or later for its .NET certificate APIs"
     exit 1
 }
 

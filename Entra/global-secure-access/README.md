@@ -108,7 +108,7 @@ No specific configurations required beyond deploying the Defender for Endpoint a
 
 ## Prerequisites
 
-- PowerShell 7.4+, `Az.Accounts`, and `Microsoft.Graph.Authentication`. Azure resource operations use `Invoke-AzRestMethod`; no other Az modules are required.
+- PowerShell 7.6+, `Az.Accounts`, and `Microsoft.Graph.Authentication`. Azure resource operations use `Invoke-AzRestMethod`; no other Az modules are required.
 - Azure `Contributor` plus `User Access Administrator`, or `Owner`, when scoped RBAC assignments must be created.
 - Graph delegated scopes `NetworkAccess.ReadWrite.All` and `DeviceManagementConfiguration.ReadWrite.All` for full setup. `-RenewCrlOnly` and `-CrlStatusOnly` require no Graph session.
 - Appropriate Global Secure Access and Intune licensing.

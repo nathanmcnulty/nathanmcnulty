@@ -226,8 +226,8 @@ Describe 'Initialize-GSATLSInspection lifecycle safeguards' {
             $script:createdPolicy.displayName | Should -Be "$baseName - $($newRoot.Certificate.Thumbprint)"
             $script:createdPolicy.trustedRootCertificate | Should -Be $newRootBase64
             $existing.trustedRootCertificate | Should -Be $oldRootBase64
-            Assert-MockCalled Invoke-MgGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
-            Assert-MockCalled Invoke-MgGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'PATCH' }
+            Should -Invoke Invoke-MgGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+            Should -Invoke Invoke-MgGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'PATCH' }
         } finally {
             $oldRoot.Certificate.Dispose()
             $oldRoot.Key.Dispose()
@@ -246,7 +246,7 @@ Describe 'Initialize-GSATLSInspection lifecycle safeguards' {
             {
                 New-IntuneTrustedRootCertPolicy -Platform Windows -RootCertBase64 $rootBase64 -AssignToAllDevices $false -RequireExisting
             } | Should -Throw '*Stage and deploy*'
-            Assert-MockCalled Invoke-MgGraphRequest -Times 0 -Exactly
+            Should -Invoke Invoke-MgGraphRequest -Times 0 -Exactly
         } finally {
             $root.Certificate.Dispose()
             $root.Key.Dispose()
@@ -406,7 +406,7 @@ Describe 'Initialize-GSATLSInspection lifecycle safeguards' {
 
         $script:azureMethods | Should -HaveCount 1
         $script:azureMethods[0] | Should -Be 'GET'
-        Assert-MockCalled Invoke-MgGraphRequest -Times 0 -Exactly
+        Should -Invoke Invoke-MgGraphRequest -Times 0 -Exactly
     }
 
     It 'restores disabled-deny Key Vault settings and preserves unrelated ACL fields after private validation fails' {
@@ -496,8 +496,8 @@ Describe 'Initialize-GSATLSInspection lifecycle safeguards' {
 
             $selection.FileName | Should -Be "gsa-tls-root-ca-$($newRoot.Certificate.Thumbprint.ToLowerInvariant()).crl"
             $selection.ExistingCrl | Should -BeNullOrEmpty
-            Assert-MockCalled Get-CrlBlob -Times 2 -Exactly
-            Assert-MockCalled Set-AzureStorageBlob -Times 0 -Exactly
+            Should -Invoke Get-CrlBlob -Times 2 -Exactly
+            Should -Invoke Set-AzureStorageBlob -Times 0 -Exactly
         } finally {
             $legacyRoot.Certificate.Dispose()
             $legacyRoot.Key.Dispose()
@@ -589,7 +589,7 @@ Describe 'Initialize-GSATLSInspection lifecycle safeguards' {
             $script:publishedBlob | Should -Be 'gsa-tls-root-ca.crl'
             $script:publishedETag | Should -Be '"legacy-etag"'
             $script:publicationChecks | Should -Contain 'http://legacy.z1.web.core.windows.net/gsa-tls-root-ca.crl'
-            Assert-MockCalled Invoke-MgGraphRequest -Times 0 -Exactly
+            Should -Invoke Invoke-MgGraphRequest -Times 0 -Exactly
         } finally {
             $root.Certificate.Dispose()
             $root.Key.Dispose()
