@@ -55,7 +55,7 @@
     .\New-EntraPrivateAccessEnterpriseApps.ps1 -UserPrincipalName "user1@contoso.com","user2@contoso.com" -FQDN "app.contoso.internal" -IP "10.0.0.10" -Port "443"
 
 .NOTES
-    Requires PowerShell 7.0+ and Microsoft.Graph.Authentication.
+    Requires PowerShell 7.6+ and Microsoft.Graph.Authentication.
     Private Access segment APIs currently use Microsoft Graph beta endpoints.
 
     Required delegated scopes:
@@ -64,7 +64,7 @@
     - AppRoleAssignment.ReadWrite.All
 #>
 
-#Requires -Version 7.0
+#Requires -Version 7.6
 #Requires -Modules Microsoft.Graph.Authentication
 
 [CmdletBinding(DefaultParameterSetName = 'Csv')]

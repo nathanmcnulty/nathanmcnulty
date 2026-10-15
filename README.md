@@ -19,3 +19,7 @@ I am a Microsoft MVP in Security and a Principal Security Solutions Architect fo
 Please feel free to open an issue if you have any requests for scripts, tools, or example solutions. I also welcome PR's, especially when they fix something I broke :)
 
 <center><a href='https://ko-fi.com/K3K6JZ7N1' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi1.png?v=3' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a></center>
+
+## PowerShell tooling
+
+Maintained PowerShell scripts require PowerShell 7.6 or later. Use Pester 6.2.0 or later for the repository test suites. Generated passkey scripts are synchronized from their canonical source; their baseline migration is tracked separately in issue #17.
